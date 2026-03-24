@@ -1,0 +1,269 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/*  TYPOGRAPHY FOUNDATION                                                      */
+/* ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Font families */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-serif: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Theme Transitions */
+  --transition-speed: 0.3s;
+
+  /* ─── DARK THEME (Default) ──────────────────────────────────────────────── */
+  --bg-primary: #09090b;
+  --bg-secondary: #18182b;
+  --bg-gradient: radial-gradient(ellipse at 50% -10%, #1d1d40 0%, #09090b 65%);
+
+  --card-bg: rgba(255, 255, 255, 0.04);
+  --card-bg-hover: rgba(255, 255, 255, 0.07);
+  --card-border: rgba(255, 255, 255, 0.09);
+  --card-border-hover: rgba(99, 102, 241, 0.35);
+
+  /* ➜ Light text on dark background */
+  --text-primary: #f4f4f5;
+  --text-secondary: #d4d4d8;
+  --text-muted: #71717a;
+  --text-heading: #ffffff;
+
+  --nav-text: #a1a1aa;
+  --nav-text-active: #ffffff;
+
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --bg-glass: rgba(255, 255, 255, 0.05);
+  --accent-primary: #6366f1;
+  --accent-secondary: #8b5cf6;
+  --input-bg: rgba(0, 0, 0, 0.45);
+  --input-border: rgba(255, 255, 255, 0.08);
+  --glass-blur: blur(14px);
+  --theme-scheme: dark;
+
+  /* Scrollbar (dark) */
+  --scrollbar-thumb: rgba(99, 102, 241, 0.35);
+  --scrollbar-thumb-hover: rgba(99, 102, 241, 0.6);
+  --scrollbar-track: rgba(255, 255, 255, 0.03);
+}
+
+/* ─── LIGHT THEME ──────────────────────────────────────────────────────────── */
+.light {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f4f4f5;
+  --bg-gradient: radial-gradient(ellipse at 50% -10%, #e0e7ff 0%, #f8fafc 65%);
+
+  --card-bg: rgba(255, 255, 255, 0.85);
+  --card-bg-hover: rgba(255, 255, 255, 1);
+  --card-border: rgba(0, 0, 0, 0.07);
+  --card-border-hover: rgba(99, 102, 241, 0.30);
+
+  /* ➜ Dark text on light background */
+  --text-primary: #050505;
+  /* Near black */
+  --text-secondary: #0a0a0a;
+  /* Extremely dark */
+  --text-muted: #374151;
+  /* Much darker muted (gray-700) */
+  --text-heading: #000000;
+
+  --nav-text: #1f2937;
+  --nav-text-active: #000000;
+
+  --border-subtle: rgba(0, 0, 0, 0.15);
+  --bg-glass: rgba(0, 0, 0, 0.08);
+  --accent-primary: #3730a3;
+  /* Deeper indigo */
+  --accent-secondary: #5b21b6;
+  /* Deeper violet */
+  --input-bg: #ffffff;
+  --input-border: #6b7280;
+  /* Significantly darker border */
+  --glass-blur: blur(10px);
+  --theme-scheme: light;
+
+  /* Scrollbar (light) */
+  --scrollbar-thumb: rgba(79, 70, 229, 0.3);
+  --scrollbar-thumb-hover: rgba(79, 70, 229, 0.55);
+  --scrollbar-track: rgba(0, 0, 0, 0.04);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/*  BASE                                                                       */
+/* ─────────────────────────────────────────────────────────────────────────── */
+body {
+  margin: 0;
+  display: flex;
+  place-content: center;
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--bg-gradient);
+  color: var(--text-secondary);
+  font-weight: 500;
+  /* Increased from 400 for better legibility */
+  transition: background var(--transition-speed), color var(--transition-speed);
+}
+
+#root {
+  width: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Headings unified with logo style */
+h1,
+h2 {
+  font-family: var(--font-sans);
+  font-weight: 800;
+  color: var(--text-heading);
+  letter-spacing: -0.04em;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Monospace for numbers, codes, invoice IDs */
+code,
+kbd,
+pre,
+.font-mono,
+[class*="mono"] {
+  font-family: var(--font-mono);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/*  UTILITY CLASSES                                                            */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+/* Paper grain texture (from Tactile project) */
+.paper-grain {
+  position: relative;
+  isolation: isolate;
+}
+
+.paper-grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.glass-card {
+  background: var(--card-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  transition: all var(--transition-speed) ease;
+}
+
+.glass-card:hover {
+  border-color: var(--card-border-hover);
+  background: var(--card-bg-hover);
+  box-shadow: 0 8px 40px rgba(99, 102, 241, 0.08);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--text-heading) 0%, var(--text-muted) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
+  color: #ffffff;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 0.875rem;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.primary-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.4);
+  opacity: 0.95;
+}
+
+.input-field {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 10px 14px;
+  width: 100%;
+  outline: none;
+  font-family: var(--font-sans);
+  transition: border-color var(--transition-speed);
+}
+
+.input-field:focus {
+  border-color: var(--accent-primary);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/*  SCROLLBARS — theme-aware                                                  */
+/* ─────────────────────────────────────────────────────────────────────────── */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 10px;
+  transition: background 0.2s;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Global thin scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
