@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { AudioLines, Video, Loader2, Download, AlertCircle, CheckCircle2, FileText, Copy, Cpu } from 'lucide-react';
+import { AudioLines, Video, Loader2, Download, AlertCircle, CheckCircle2, FileText, Copy, Cpu, Activity } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { audioProcessor } from '../../lib/audioProcessor';
 
@@ -11,20 +11,22 @@ export const MediaTranscriber = ({ userId }: MediaTranscriberProps) => {
     const [file, setFile] = useState<File | null>(null);
     const [status, setStatus] = useState<'idle' | 'preparing' | 'processing' | 'success' | 'error'>('idle');
     const [processStep, setProcessStep] = useState<'converting' | 'uploading' | 'transcribing' | 'idle'>('idle');
-    const [chunkProgress, setChunkProgress] = useState({ current: 0, total: 0 });
     const [errorMsg, setErrorMsg] = useState<string>('');
     const [transcription, setTranscription] = useState<string>('');
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selected = e.target.files?.[0];
         if (selected && (selected.type.startsWith('audio/') || selected.type.startsWith('video/'))) {
             setFile(selected);
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            setPreviewUrl(URL.createObjectURL(selected));
             setStatus('idle');
             setProcessStep('idle');
             setErrorMsg('');
             setTranscription('');
-            setChunkProgress({ current: 0, total: 0 });
+            setTranscription('');
         } else {
             setErrorMsg('Please select a valid audio or video file.');
         }
@@ -35,11 +37,13 @@ export const MediaTranscriber = ({ userId }: MediaTranscriberProps) => {
         const dropped = e.dataTransfer.files?.[0];
         if (dropped && (dropped.type.startsWith('audio/') || dropped.type.startsWith('video/'))) {
             setFile(dropped);
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            setPreviewUrl(URL.createObjectURL(dropped));
             setStatus('idle');
             setProcessStep('idle');
             setErrorMsg('');
             setTranscription('');
-            setChunkProgress({ current: 0, total: 0 });
+            setTranscription('');
         }
     };
 
@@ -56,68 +60,59 @@ export const MediaTranscriber = ({ userId }: MediaTranscriberProps) => {
             const processedAudio = await audioProcessor.processMedia(file);
             console.log(`[MEDIA TRANSCRIBER] ✅ Conversion complete. New size: ${(processedAudio.size / 1024 / 1024).toFixed(2)} MB`);
 
-            // 2. Duration Check & Chunking
+            // 2. Duration Check
             const duration = await audioProcessor.getDuration(processedAudio);
-            const chunks = await audioProcessor.sliceAudio(processedAudio, duration);
-            setChunkProgress({ current: 0, total: chunks.length });
             
-            let fullTranscription = '';
+            // 3. Upload Full File
+            setProcessStep('uploading');
+            const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_').replace(/\.[^/.]+$/, "");
+            const filePath = `${userId}/${Date.now()}_${safeName}.mp3`;
             
-            // 3. Process each chunk
-            for (let i = 0; i < chunks.length; i++) {
-                const chunk = chunks[i];
-                setChunkProgress({ current: i + 1, total: chunks.length });
-                
-                // Upload Chunk
-                setProcessStep('uploading');
-                const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_').replace(/\.[^/.]+$/, "");
-                const chunkPath = `${userId}/chunks/${Date.now()}_${safeName}_part${i+1}.mp3`;
-                
-                console.log(`[MEDIA TRANSCRIBER] ⬆️ Uploading chunk ${i+1}/${chunks.length}`);
-                const { error: uploadError } = await supabase.storage.from('trans_media_assets').upload(chunkPath, chunk.blob);
-                if (uploadError) throw new Error(`Failed to upload chunk ${i+1}: ` + uploadError.message);
+            console.log(`[MEDIA TRANSCRIBER] ⬆️ Uploading full audio file...`);
+            const { error: uploadError } = await supabase.storage.from('trans_media_assets').upload(filePath, processedAudio);
+            if (uploadError) throw new Error(`Failed to upload file: ` + uploadError.message);
 
-                // Transcribe Chunk
-                setProcessStep('transcribing');
-                setStatus('processing');
-                console.log(`[MEDIA TRANSCRIBER] 🚀 Transcribing chunk ${i+1}...`);
-                
-                const { data: { session } } = await supabase.auth.getSession();
-                const { data, error } = await supabase.functions.invoke('transcribe-media', {
-                    headers: { Authorization: `Bearer ${session?.access_token}` },
-                    body: {
-                        filePath: chunkPath,
-                        mimeType: 'audio/mpeg',
-                        originalFileName: file.name,
-                        fileSize: file.size,
-                        duration: duration,
-                        chunkIndex: i + 1,
-                        totalChunks: chunks.length,
-                        model: 'google/gemini-2.0-flash-001'
-                    }
-                });
-
-                if (error || !data?.success) {
-                    const msg = data?.error || error?.message || `Chunk ${i+1} transcription failed.`;
-                    throw new Error(msg);
+            // 4. Transcribe Full File
+            setProcessStep('transcribing');
+            setStatus('processing');
+            console.log(`[MEDIA TRANSCRIBER] 🚀 Transcribing with Deepgram...`);
+            
+            const { data: { session } } = await supabase.auth.getSession();
+            const { data, error } = await supabase.functions.invoke('transcribe-media', {
+                headers: { Authorization: `Bearer ${session?.access_token}` },
+                body: {
+                    filePath: filePath,
+                    mimeType: 'audio/mpeg',
+                    originalFileName: file.name,
+                    fileSize: file.size,
+                    duration: duration
                 }
+            });
 
-                fullTranscription += (fullTranscription ? '\n\n' : '') + data.transcription;
+            if (error || !data?.success) {
+                console.error("[MEDIA TRANSCRIBER] ❌ Function Invoke Error:", error);
+                
+                let msg = data?.error || error?.message || `Transcription failed.`;
+                
+                // Supabase FunctionsHttpError usually has the response body in .context
+                if (error && (error as any).context) {
+                    try {
+                        const errData = await (error as any).context.json();
+                        if (errData.error) msg = errData.error;
+                        console.error("[MEDIA TRANSCRIBER] 🔍 Error Context:", errData);
+                    } catch { /* ignore parse error */ }
+                }
+                
+                throw new Error(msg);
             }
 
-            // 4. Save History (Final Result)
-            const IS_GUEST = userId === '00000000-0000-0000-0000-000000000000';
-            if (!IS_GUEST) {
-                try {
-                    await supabase.from('conv_documents').insert({
-                        user_id: userId,
-                        original_file_path: file.name,
-                        status: 'completed'
-                    });
-                } catch (dbErr) {
-                    console.warn("[MEDIA TRANSCRIBER] ⚠️ History logging skipped.", dbErr);
-                }
+            const fullTranscription = data.transcription || "";
+            if (!fullTranscription) {
+                console.error("[DEEPGRAM DEBUG] Raw Response:", JSON.stringify(data.debug, null, 2));
+                throw new Error("Deepgram returned empty transcription.\n\nRaw Response:\n" + JSON.stringify(data.debug, null, 2));
             }
+
+            // 5. Finalizing Results
 
             setTranscription(fullTranscription);
             setStatus('success');
@@ -152,11 +147,33 @@ export const MediaTranscriber = ({ userId }: MediaTranscriberProps) => {
     return (
         <div className="max-w-4xl mx-auto py-12">
             <div className="text-center mb-10">
-                <h1 className="text-4xl font-black tracking-tight gradient-text mb-4">Media Intelligence Transcriber</h1>
+                <h1 className="text-4xl font-black tracking-tight gradient-text mb-4 animate-in fade-in slide-in-from-top-4 duration-700">Media Intelligence Transcriber</h1>
                 <p className="text-(--text-secondary) max-w-2xl mx-auto">
                     Upload your Audio or Video files. Powered by Gemini, we natively understand and transcribe speech and visual contexts with human-level accuracy.
                 </p>
             </div>
+
+            {status === 'success' && (
+                <div className="mb-8 p-6 bg-emerald-500/10 border border-emerald-500/20 rounded-3xl animate-in zoom-in-95 duration-300">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400">
+                                <Activity size={24} />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-emerald-400">Transcription Complete!</h3>
+                                <p className="text-xs text-(--text-muted)">Your file has been processed and saved to your history.</p>
+                            </div>
+                        </div>
+                        <button 
+                            onClick={() => { setStatus('idle'); setFile(null); setTranscription(''); }}
+                            className="px-4 py-2 bg-(--card-bg) border border-(--border-subtle) hover:border-emerald-500/30 text-xs font-bold rounded-xl transition-all"
+                        >
+                            Transcribe Another
+                        </button>
+                    </div>
+                </div>
+            )}
 
             <div className="bg-(--card-bg) border border-(--border-subtle) rounded-3xl p-8 shadow-xl">
                 {!file ? (
@@ -205,13 +222,25 @@ export const MediaTranscriber = ({ userId }: MediaTranscriberProps) => {
                             </div>
                             {status === 'idle' && (
                                 <button 
-                                    onClick={() => setFile(null)}
+                                    onClick={() => {
+                                        setFile(null);
+                                        if (previewUrl) URL.revokeObjectURL(previewUrl);
+                                        setPreviewUrl(null);
+                                    }}
                                     className="ml-4 p-2 text-(--text-muted) hover:text-red-400 transition-colors"
                                 >
                                     Cancel
                                 </button>
                             )}
                         </div>
+
+                        {/* Audio Preview (Only for Audio files) */}
+                        {file && file.type.startsWith('audio/') && previewUrl && status === 'idle' && (
+                            <div className="p-4 bg-(--bg-main) border border-(--border-subtle) rounded-2xl flex flex-col gap-2 animate-in slide-in-from-top-2">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-(--text-muted)">Preview Recording</p>
+                                <audio src={previewUrl} controls crossOrigin="anonymous" className="w-full h-10 accent-purple-500" />
+                            </div>
+                        )}
 
                         {/* Status & Actions */}
                         <div className="flex flex-col items-center justify-center pt-4">
@@ -234,7 +263,7 @@ export const MediaTranscriber = ({ userId }: MediaTranscriberProps) => {
                                     <p className="text-xs text-(--text-muted) mt-2">
                                         {processStep === 'converting' 
                                             ? 'Extracting high-quality audio for faster processing'
-                                            : `Preparing part ${chunkProgress.current} of ${chunkProgress.total}`}
+                                            : `Uploading secure audio file to cloud storage`}
                                     </p>
                                 </div>
                             )}
@@ -247,19 +276,9 @@ export const MediaTranscriber = ({ userId }: MediaTranscriberProps) => {
                                         <Cpu className="absolute inset-0 m-auto" size={24} />
                                     </div>
                                     <p className="font-bold tracking-wide">
-                                        {chunkProgress.total > 1 
-                                            ? `AI Transcribing: Part ${chunkProgress.current} of ${chunkProgress.total}`
-                                            : 'AI Engine is analyzing speech...'}
+                                        Voice AI Engine is analyzing speech...
                                     </p>
-                                    {chunkProgress.total > 1 && (
-                                        <div className="w-48 h-1.5 bg-purple-500/20 rounded-full mt-4 overflow-hidden">
-                                            <div 
-                                                className="h-full bg-purple-500 transition-all duration-500" 
-                                                style={{ width: `${(chunkProgress.current / chunkProgress.total) * 100}%` }}
-                                            />
-                                        </div>
-                                    )}
-                                    <p className="text-xs text-(--text-muted) mt-4">This usually takes 10-30 seconds per part.</p>
+                                    <p className="text-xs text-(--text-muted) mt-4">This usually takes about 10-30 seconds.</p>
                                 </div>
                             )}
 

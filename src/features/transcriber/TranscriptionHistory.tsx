@@ -5,7 +5,6 @@ import {
     FileText, 
     Calendar, 
     Cpu, 
-    ExternalLink, 
     RefreshCw, 
     AlertCircle, 
     Database,
@@ -15,7 +14,12 @@ import {
     Languages,
     Globe,
     Activity,
-    Info
+    Info,
+    Volume2,
+    FileJson,
+    ListFilter,
+    AlignLeft,
+    AlignRight
 } from 'lucide-react';
 
 interface TranscriptionRecord {
@@ -35,6 +39,8 @@ interface TranscriptionRecord {
     created_at: string;
     chunk_index: number;
     total_chunks: number;
+    summary?: string;
+    segments?: Array<{ start: number; end: number; speaker: string; text: string }>;
 }
 
 interface TranscriptionHistoryProps {
@@ -49,6 +55,13 @@ export const TranscriptionHistory = ({ userId }: TranscriptionHistoryProps) => {
     const [isTranslating, setIsTranslating] = useState(false);
     const [activeView, setActiveView] = useState<'original' | string>('original');
     const [showLogs, setShowLogs] = useState<'transcription' | string | null>(null);
+    const [isSummarizing, setIsSummarizing] = useState(false);
+    const [audioUrl, setAudioUrl] = useState<string | null>(null);
+    const audioRef = React.useRef<HTMLAudioElement>(null);
+    const [activeIndex, setActiveIndex] = useState(-1);
+    const [textAlign, setTextAlign] = useState<'auto' | 'ltr' | 'rtl'>('auto');
+    const segmentRefs = React.useRef<{[key: number]: HTMLDivElement | null}>({});
+    const segmentsRef = React.useRef<any[]>([]); // stable ref to avoid stale closures
 
     const fetchHistory = async () => {
         setLoading(true);
@@ -152,13 +165,129 @@ export const TranscriptionHistory = ({ userId }: TranscriptionHistoryProps) => {
         }
     };
 
+    const handleSummarize = async () => {
+        if (!selectedRecord || isSummarizing) return;
+        setIsSummarizing(true);
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const { data, error } = await supabase.functions.invoke('summarize-text', {
+                headers: { Authorization: `Bearer ${session?.access_token}` },
+                body: { 
+                    text: selectedRecord.transcription_text,
+                    recordId: selectedRecord.id,
+                    language: selectedRecord.original_language
+                }
+            });
+
+            if (error || data.error) throw new Error(data.error || error.message);
+
+            const updatedRecord = { ...selectedRecord, summary: data.summary };
+            setSelectedRecord(updatedRecord);
+            setRecords(prev => prev.map(r => r.id === selectedRecord.id ? updatedRecord : r));
+        } catch (err: any) {
+            console.error("Summarization failed:", err);
+            alert("Failed to summarize: " + err.message);
+        } finally {
+            setIsSummarizing(false);
+        }
+    };
+
+    const fetchAudioUrl = async (path: string) => {
+        try {
+            const { data, error } = await supabase.storage
+                .from('trans_media_assets')
+                .createSignedUrl(path, 3600); // 1 hour access
+            
+            if (error) throw error;
+            setAudioUrl(data.signedUrl);
+        } catch (err) {
+            console.error("Error getting signed URL:", err);
+        }
+    };
+
+    useEffect(() => {
+        const loadAudio = async () => {
+            // Populate segments ref for use in handleTimeUpdate (stable, no re-render)
+            let segs = selectedRecord?.segments || [];
+            if (typeof segs === 'string') {
+                try { segs = JSON.parse(segs); } catch { segs = []; }
+            }
+            segmentsRef.current = segs as any[];
+            setActiveIndex(-1);
+
+            if (selectedRecord?.storage_path) {
+                await fetchAudioUrl(selectedRecord.storage_path);
+            } else {
+                setAudioUrl(null);
+            }
+        };
+        loadAudio();
+    }, [selectedRecord?.id, selectedRecord?.storage_path, selectedRecord?.segments]);
+
+    const seekAudio = (seconds: number) => {
+        console.log(`[SYNC] 🎯 Seeking to ${seconds}s...`);
+        if (audioRef.current) {
+            audioRef.current.currentTime = seconds;
+            // Always resume playback on click
+            audioRef.current.play().catch(e => {
+                // AbortError is benign — browser cancelled play due to load or quick seek
+                if (e.name !== 'AbortError') {
+                    console.warn("[SYNC] ⚠️ Playback failed:", e);
+                }
+            });
+        } else {
+            console.warn("[SYNC] ❌ Audio element ref not available");
+        }
+    };
+
+    const handleTimeUpdate = () => {
+        const t = audioRef.current?.currentTime ?? 0;
+        const segs = segmentsRef.current;
+        if (!segs.length) return;
+
+        const newIndex = segs.findIndex(
+            (seg: any) => t >= seg.start && t < seg.end
+        );
+
+        // Only trigger a re-render when the active segment actually changes
+        setActiveIndex(prev => prev === newIndex ? prev : newIndex);
+    };
+
+    const formatSRT = (segments: any[]) => {
+        if (!segments || segments.length === 0) return '';
+        
+        return segments.map((seg, i) => {
+            const formatTime = (seconds: number) => {
+                const h = Math.floor(seconds / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const s = Math.floor(seconds % 60);
+                const ms = Math.floor((seconds % 1) * 1000);
+                return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`;
+            };
+            
+            return `${i + 1}\n${formatTime(seg.start)} --> ${formatTime(seg.end)}\n${seg.speaker ? `${seg.speaker}: ` : ''}${seg.text}\n\n`;
+        }).join('');
+    };
+
+    const highlightSpeakers = (text: string) => {
+        if (!text) return null;
+        const parts = text.split(/(Speaker \d+:)/g);
+        return parts.map((part, i) => {
+            if (part?.match(/Speaker \d+:/)) {
+                return <span key={i} className="font-black text-purple-400 mr-1">{part}</span>;
+            }
+            return <span key={i}>{part}</span>;
+        });
+    };
+
     useEffect(() => {
         fetchHistory();
     }, [userId]);
 
     const filteredRecords = records.filter(r => 
         r.original_filename.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.transcription_text?.toLowerCase().includes(searchTerm.toLowerCase())
+        r.transcription_text?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.summary?.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     const formatDate = (dateStr: string) => {
@@ -343,7 +472,7 @@ export const TranscriptionHistory = ({ userId }: TranscriptionHistoryProps) => {
                             </button>
                         </div>
 
-                        {/* Translation Controls */}
+                        {/* Translation & Utility Controls */}
                         <div className="bg-(--bg-main) border-b border-(--border-subtle) px-6 py-3 flex flex-wrap items-center justify-between gap-4">
                             <div className="flex items-center gap-2">
                                 <button 
@@ -364,6 +493,15 @@ export const TranscriptionHistory = ({ userId }: TranscriptionHistoryProps) => {
                             </div>
 
                             <div className="flex items-center gap-3">
+                                <button 
+                                    onClick={handleSummarize}
+                                    disabled={isSummarizing || !!selectedRecord.summary}
+                                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-all border border-amber-500/20 disabled:opacity-50"
+                                >
+                                    {isSummarizing ? <RefreshCw size={12} className="animate-spin" /> : <ListFilter size={12} />}
+                                    {selectedRecord.summary ? 'Summarized' : 'Generate Summary'}
+                                </button>
+                                <span className="w-px h-4 bg-(--border-subtle) mx-1"></span>
                                 <span className="text-[10px] text-(--text-muted) font-bold uppercase tracking-widest">AI Translation:</span>
                                 {selectedRecord.original_language !== 'Arabic' && (
                                     <button 
@@ -388,9 +526,52 @@ export const TranscriptionHistory = ({ userId }: TranscriptionHistoryProps) => {
                             </div>
                         </div>
                         
-                        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-[radial-gradient(circle_at_top_right,rgba(168,85,247,0.03),transparent_40%)]">
                             {selectedRecord.status === 'completed' ? (
-                                <div className="space-y-6">
+                                <div className="space-y-8">
+                                    {/* Audio Player Section - always rendered so audioRef is never null */}
+                                    <div className={`bg-(--bg-main) border border-(--border-subtle) rounded-2xl p-4 flex items-center gap-6 shadow-sm transition-opacity ${audioUrl ? 'opacity-100' : 'opacity-0 pointer-events-none h-0 overflow-hidden p-0 border-0'}`}>
+                                        <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center text-purple-400">
+                                            <Volume2 size={20} />
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-(--text-muted) mb-2">Recording Playback</p>
+                                            <audio 
+                                                ref={audioRef}
+                                                src={audioUrl ?? undefined} 
+                                                controls 
+                                                crossOrigin="anonymous"
+                                                onTimeUpdate={handleTimeUpdate}
+                                                className="w-full h-10 accent-purple-500"
+                                                onError={(e) => {
+                                                    console.error("Audio playback error:", e);
+                                                }}
+                                            >
+                                                {audioUrl && <source src={audioUrl} type="audio/mpeg" />}
+                                                </audio>
+                                            </div>
+                                    </div>
+
+                                    {/* Summary Section */}
+                                    {selectedRecord.summary && (
+                                        <div className="bg-amber-500/5 border border-amber-500/10 rounded-2xl p-6 relative overflow-hidden group">
+                                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                                                <ListFilter size={64} className="text-amber-500" />
+                                            </div>
+                                            <h4 className="text-amber-500 text-xs font-black uppercase tracking-widest mb-4 flex items-center gap-2">
+                                                <Activity size={14} /> 3-Point Quick Summary
+                                            </h4>
+                                            <div className="space-y-3 relative z-10">
+                                                {selectedRecord.summary.split('\n').filter(s => s.trim()).map((point, i) => (
+                                                    <div key={i} className="flex gap-3 text-sm text-(--text-secondary) leading-relaxed">
+                                                        <span className="text-amber-500/50 font-bold">•</span>
+                                                        <p>{point.replace(/^[*-]\s*/, '')}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
                                     <div className="flex flex-wrap gap-4">
                                         {selectedRecord.transcription_metadata?.process_time_ms && (
                                             <div className={`flex-1 min-w-[200px] bg-purple-500/5 border border-purple-500/10 rounded-xl p-3 flex items-center justify-between transition-all ${showLogs === 'transcription' ? 'border-purple-500/40 bg-purple-500/10' : ''}`}>
@@ -440,17 +621,109 @@ export const TranscriptionHistory = ({ userId }: TranscriptionHistoryProps) => {
                                                         <span>Tokens:</span> 
                                                         <span>{(showLogs === 'transcription' ? selectedRecord.transcription_metadata : selectedRecord.translations?.[showLogs]?.metadata)?.usage?.total_tokens || 'Unknown'}</span>
                                                     </p>
+                                                    {showLogs === 'transcription' && (
+                                                        <p className="flex justify-between text-purple-400 font-bold border-t border-zinc-800/50 pt-1">
+                                                            <span>Segments:</span> 
+                                                            <span>{selectedRecord.segments?.length || 0} found</span>
+                                                        </p>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
                                     )}
 
+                                    <div className="flex items-center justify-between mt-6 mb-2">
+                                        <h3 className="text-sm font-bold text-zinc-300">Transcription Details</h3>
+                                        <div className="flex items-center gap-1 bg-zinc-900/50 p-1 rounded-lg border border-zinc-800">
+                                            <button 
+                                                onClick={() => setTextAlign('ltr')}
+                                                className={`p-1.5 rounded-md transition-all ${textAlign === 'ltr' ? 'bg-purple-500/20 text-purple-400' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'}`}
+                                                title="Left to Right"
+                                            >
+                                                <AlignLeft size={14} />
+                                            </button>
+                                            <button 
+                                                onClick={() => setTextAlign('auto')}
+                                                className={`p-1.5 rounded-md text-[10px] font-black uppercase tracking-wider transition-all px-2 ${textAlign === 'auto' ? 'bg-purple-500/20 text-purple-400' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'}`}
+                                                title="Auto Detect Language"
+                                            >
+                                                Auto
+                                            </button>
+                                            <button 
+                                                onClick={() => setTextAlign('rtl')}
+                                                className={`p-1.5 rounded-md transition-all ${textAlign === 'rtl' ? 'bg-purple-500/20 text-purple-400' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'}`}
+                                                title="Right to Left"
+                                            >
+                                                <AlignRight size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+
                                     <div className={`prose prose-invert max-w-none transition-all duration-300 ${isTranslating ? 'opacity-30 blur-sm' : 'opacity-100 blur-0'}`}>
-                                        {(activeView === 'original' ? selectedRecord.transcription_text : selectedRecord.translations?.[activeView]?.text)?.split('\n').map((para, i) => (
-                                            <p key={i} className={`text-(--text-secondary) leading-relaxed mb-4 ${activeView === 'Arabic' ? 'text-right font-arabic' : ''}`}>
-                                                {para}
-                                            </p>
-                                        ))}
+                                        {(() => {
+                                            let segs = selectedRecord.segments;
+                                            if (typeof segs === 'string') {
+                                                try { segs = JSON.parse(segs); } catch { segs = []; }
+                                            }
+                                            
+                                            if (activeView === 'original' && segs && segs.length > 0) {
+                                                console.log(`[SYNC] 📜 Rendering ${segs.length} interactive segments`);
+                                                return (
+                                                    <div className="space-y-4">
+                                                        <div className="flex items-center gap-2 mb-4 p-2 bg-purple-500/5 border border-purple-500/10 rounded-lg">
+                                                            <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></div>
+                                                            <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Interactive Mode: Click text to seek audio</span>
+                                                        </div>
+                                                        {segs.map((seg: any, i: number) => {
+                                                            const isCurrentActive = i === activeIndex;
+                                                            return (
+                                                                <div 
+                                                                    key={i} 
+                                                                    ref={el => { segmentRefs.current[i] = el; }}
+                                                                    onClick={() => seekAudio(seg.start)}
+                                                                    className={`group/seg cursor-pointer p-4 -mx-4 rounded-2xl transition-all border-2 ${
+                                                                        isCurrentActive 
+                                                                        ? 'bg-purple-500/10 border-purple-500/40 shadow-lg shadow-purple-500/5 translate-x-1' 
+                                                                        : 'border-transparent hover:bg-purple-500/5 hover:border-purple-500/10'
+                                                                    } active:bg-purple-500/20`}
+                                                                    dir={textAlign}
+                                                                >
+                                                                    <div className="flex items-center gap-3 mb-2" dir="ltr">
+                                                                        <div className={`w-1.5 h-1.5 rounded-full transition-all ${isCurrentActive ? 'bg-purple-500 scale-125 shadow-[0_0_8px_rgba(168,85,247,0.8)]' : 'bg-purple-500/20'}`}></div>
+                                                                        <span className={`text-[10px] font-black transition-colors ${isCurrentActive ? 'text-purple-400' : 'text-purple-400/40 group-hover/seg:text-purple-400/60'}`}>
+                                                                            {formatDuration(seg.start)}
+                                                                        </span>
+                                                                        <span className="text-[10px] font-bold text-(--text-muted) uppercase tracking-widest">
+                                                                            {seg.speaker || 'Speaker'}
+                                                                        </span>
+                                                                    </div>
+                                                                    <p className={`leading-relaxed transition-colors ${isCurrentActive ? 'text-(--text-primary) font-medium' : 'text-(--text-secondary)'}`}>
+                                                                        {seg.text}
+                                                                    </p>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                );
+                                            }
+                                            
+                                            console.log(`[SYNC] ℹ️ Using standard paragraph rendering (No segments found)`);
+                                            return (
+                                                <div className="space-y-4">
+                                                    {activeView === 'original' && (
+                                                        <div className="flex items-center gap-2 mb-4 p-2 bg-amber-500/5 border border-amber-500/10 rounded-lg">
+                                                            <AlertCircle size={14} className="text-amber-500" />
+                                                            <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Interactive data unavailable for this recording</span>
+                                                        </div>
+                                                    )}
+                                                    {(activeView === 'original' ? selectedRecord.transcription_text : selectedRecord.translations?.[activeView]?.text)?.split('\n').map((para: string, i: number) => (
+                                                        <p key={i} dir={textAlign} className={`text-(--text-secondary) leading-relaxed mb-4 ${activeView === 'Arabic' || (activeView === 'original' && selectedRecord.original_language === 'Arabic') ? 'font-arabic' : ''}`}>
+                                                            {highlightSpeakers(para)}
+                                                        </p>
+                                                    ))}
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
                             ) : selectedRecord.status === 'failed' ? (
@@ -480,7 +753,7 @@ export const TranscriptionHistory = ({ userId }: TranscriptionHistoryProps) => {
                                 </div>
                             </div>
                             
-                            <div className="flex gap-4">
+                            <div className="flex flex-wrap gap-3">
                                 <button 
                                     onClick={() => {
                                         const blob = new Blob([selectedRecord.transcription_text || ''], { type: 'text/plain' });
@@ -491,11 +764,29 @@ export const TranscriptionHistory = ({ userId }: TranscriptionHistoryProps) => {
                                         a.click();
                                     }}
                                     disabled={selectedRecord.status !== 'completed'}
-                                    className="btn-primary px-6 py-2.5 text-sm font-bold flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="btn-primary px-5 py-2 text-xs font-bold flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    <ExternalLink size={16} />
-                                    Export Transcription
+                                    <FileText size={14} />
+                                    Text (.txt)
                                 </button>
+
+                                {selectedRecord.segments && selectedRecord.segments.length > 0 && (
+                                    <button 
+                                        onClick={() => {
+                                            const srtContent = formatSRT(selectedRecord.segments || []);
+                                            const blob = new Blob([srtContent], { type: 'text/plain' });
+                                            const url = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            a.download = `${selectedRecord.original_filename}_subtitles.srt`;
+                                            a.click();
+                                        }}
+                                        className="bg-indigo-500 hover:bg-indigo-600 text-white shadow-lg shadow-indigo-500/20 px-5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
+                                    >
+                                        <FileJson size={14} />
+                                        Subtitles (.srt)
+                                    </button>
+                                )}
                                 
                                 {Object.entries(selectedRecord.translations || {}).map(([lang, data]) => (
                                     <button 
@@ -508,10 +799,10 @@ export const TranscriptionHistory = ({ userId }: TranscriptionHistoryProps) => {
                                             a.download = `${selectedRecord.original_filename}_translated_${lang}.txt`;
                                             a.click();
                                         }}
-                                        className="bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"
+                                        className="bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 px-5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
                                     >
-                                        <Globe size={16} />
-                                        Export {lang}
+                                        <Globe size={14} />
+                                        {lang} (.txt)
                                     </button>
                                 ))}
                             </div>

@@ -1,8 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { encode } from "https://deno.land/std@0.168.0/encoding/base64.ts"
-
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,11 +19,18 @@ serve(async (req: any) => {
     const authHeader = req.headers.get('Authorization')
     console.log(`[AUTH] 🔑 Auth Header Length: ${authHeader?.length || 0}`);
     
-    // 1. Initialize Supabase Client
+    // 1. Initialize Supabase Client (Standard for auth)
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
       { global: { headers: { Authorization: authHeader || '' } } }
+    )
+
+    // 1.5 Admin Client for Storage (to bypass "Bucket not found" / RLS issues in Edge Functions)
+    const supabaseAdmin = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { auth: { persistSession: false } }
     )
 
     // Check user but do NOT throw if unauthorized (allow standalone guest usage)
@@ -41,14 +45,15 @@ serve(async (req: any) => {
     
     if (!filePath || !mimeType) throw new Error("Missing filePath or mimeType")
 
-    const OPENROUTER_KEY = Deno.env.get('OPENROUTER_API_KEY');
+    const OPENROUTER_KEY = Deno.env.get('OPENROUTER_API_KEY') || Deno.env.get('VITE_GEMINI_API_KEY');
     if (!OPENROUTER_KEY) {
-      console.error("[ERROR] 🔑 OPENROUTER_API_KEY is missing from Deno.env");
-      throw new Error("API Key missing");
+      console.error("[ERROR] 🔑 API Key (OPENROUTER_API_KEY or VITE_GEMINI_API_KEY) is missing from Deno.env");
+      throw new Error("API Key missing. Please set OPENROUTER_API_KEY in Supabase secrets.");
     }
 
-    // 2.5 Initialize Row in Database
-    const { data: dbRow, error: dbInitError } = await supabaseClient
+    // 2.5 Initialize Row in Database (USING ADMIN for reliability)
+    console.log(`[DB] 📝 Initializing record for ${originalFileName}`);
+    const { data: dbRow, error: dbInitError } = await supabaseAdmin
       .from('trans_media_transcriptions')
       .insert({
         user_id: finalUserId,
@@ -64,126 +69,122 @@ serve(async (req: any) => {
       .select()
       .single();
 
-    if (dbInitError) console.warn("[DB] ⚠️ Could not initialize record:", dbInitError.message);
+    if (dbInitError) {
+      console.error("[DB] ❌ Initialization Error:", dbInitError.message);
+    } else {
+      console.log(`[DB] ✅ Record created: ${dbRow?.id}`);
+    }
 
     const startTime = Date.now();
 
     try {
-      // 3. Process Media to Base64 (with aggressive memory clearing)
-      console.log(`[PROCESS] 📥 Downloading media: ${filePath}`);
-      const { data: fileData, error: downloadError } = await supabaseClient
+      // 3. Generate Signed URL for Deepgram
+      console.log(`[PROCESS] 📥 Generating Signed URL for media: ${filePath}`);
+      const { data: signedData, error: signedError } = await supabaseAdmin
         .storage
-        .from('trans_media_assets') // Updated to use the new bucket name
-        .download(filePath)
+        .from('trans_media_assets')
+        .createSignedUrl(filePath, 3600); // 1 hour validity
 
-      if (downloadError || !fileData) {
-        throw new Error("Failed to download media file from storage: " + downloadError?.message)
+      if (signedError || !signedData?.signedUrl) {
+        console.error("[PROCESS] ❌ Signed URL Error:", signedError?.message);
+        throw new Error("Failed to generate signed URL for media file: " + signedError?.message)
       }
 
-      const fileSizeMB = (fileData.size / 1024 / 1024).toFixed(2);
-      console.log(`[PROCESS] 🔄 Encoding media (${fileSizeMB} MB)`);
-      
-      let base64Data: string | null = null;
-      {
-         const arrayBuffer = await fileData.arrayBuffer();
-         const uint8 = new Uint8Array(arrayBuffer);
-         base64Data = encode(uint8);
-         console.log(`[PROCESS] 💾 Base64 length: ${base64Data.length}`);
+      console.log(`[PROCESS] 🔄 Passing Signed URL to Deepgram...`);
+
+      const DEEPGRAM_KEY = Deno.env.get('DEEPGRAM_API_KEY');
+      if (!DEEPGRAM_KEY) {
+        throw new Error("DEEPGRAM_API_KEY secret is missing");
       }
 
-      // 4. AI Transcription
-      const TRANSCRIBER_PROMPT = `Transcribe this media file accurately. 
-      Identify the primary language used (English, Arabic, or Mixed).
-      Output your response in the following Markdown format:
-      ---
-      Language: [English|Arabic|Mixed]
-      ---
-      ## Visual Context
-      [Describe visual scene if video]
-      
-      ## Transcription
-      [The full transcription text]`;
+      // 4. Send to Deepgram API
+      const deepgramUrl = new URL('https://api.deepgram.com/v1/listen');
+      deepgramUrl.searchParams.append('model', 'whisper-large');
+      deepgramUrl.searchParams.append('utterances', 'true');
+      deepgramUrl.searchParams.append('diarize', 'true');
+      deepgramUrl.searchParams.append('detect_language', 'true');
 
-      const aiResponse = await fetch(OPENROUTER_API_URL, {
+      const dgResponse = await fetch(deepgramUrl.toString(), {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${OPENROUTER_KEY}`,
-          'Content-Type': 'application/json',
+          'Authorization': `Token ${DEEPGRAM_KEY}`,
+          'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          model: model || 'google/gemini-2.0-flash-001',
-          messages: [
-            { role: 'user', content: [
-              {
-                type: 'image_url',
-                image_url: { url: `data:${mimeType};base64,${base64Data}` }
-              },
-              {
-                type: 'text',
-                text: TRANSCRIBER_PROMPT
-              }
-            ]}
-          ],
-          temperature: 0.1,
-        })
-      })
+        body: JSON.stringify({ url: signedData.signedUrl })
+      });
 
-      // Clear base64 data from memory IMMEDIATELY after fetch starts
-      base64Data = null;
-
-      const aiData = await aiResponse.json()
-      const endTime = Date.now();
-      const processingTime = endTime - startTime;
-      console.log(`[PROCESS] ✨ AI Finished in ${(processingTime / 1000).toFixed(1)}s`);
-
-      if (!aiResponse.ok) {
-        throw new Error(`AI Provider Error: ${JSON.stringify(aiData)}`);
+      if (!dgResponse.ok) {
+        const errText = await dgResponse.text();
+        console.error("[DEEPGRAM] ❌ Error:", errText);
+        throw new Error(`Deepgram API Error: ${dgResponse.status} - ${errText}`);
       }
 
-      const rawContent = aiData.choices?.[0]?.message?.content || "No content returned.";
+      const dgData = await dgResponse.json();
+      const endTime = Date.now();
+      const processingTime = endTime - startTime;
+      console.log(`[PROCESS] ✨ Deepgram Finished in ${(processingTime / 1000).toFixed(1)}s`);
+
+      // 5. Map Deepgram Response
+      const detectedLang = dgData.results?.channels[0]?.detected_language || 'mixed';
       
-      // Extract language using regex
-      const langMatch = rawContent.match(/Language:\s*(English|Arabic|Mixed)/i);
-      const detectedLang = langMatch ? langMatch[1] : 'Mixed';
-      
-      // Clean content (remove the metadata section)
-      const aiContent = rawContent.replace(/---[\s\S]*?---/g, '').trim();
+      // Map utterances to our KaraokeSegment format
+      const utterances = dgData.results?.utterances || [];
+      const segments = utterances.map((u: any) => ({
+        start: u.start,
+        end: u.end,
+        speaker: `Speaker ${u.speaker !== undefined ? u.speaker + 1 : 1}`,
+        text: u.transcript
+      }));
+
+      if (segments.length === 0) {
+        console.warn("[PROCESS] ⚠️ No utterances returned! Deepgram Response sample:", JSON.stringify(dgData).substring(0, 500));
+      }
+
+      // Combine full text
+      const fallbackText = dgData.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+      const fullText = segments.length > 0 
+          ? segments.map((s: any) => `${s.speaker}: ${s.text}`).join('\n\n')
+          : fallbackText;
 
       const transcriptionMetadata = {
-        model: aiData.model,
-        usage: aiData.usage || {},
+        model: 'deepgram-nova-2',
         process_time_ms: processingTime,
         detected_language: detectedLang,
         timestamp: new Date().toISOString()
       };
 
-      // 5. Update Database with Result
+      // 6. Update Database with Result (USING ADMIN)
       if (dbRow?.id) {
-        await supabaseClient
+        console.log(`[DB] 💾 Saving results for record ${dbRow.id}`);
+        const { error: updateError } = await supabaseAdmin
           .from('trans_media_transcriptions')
           .update({
-            transcription_text: aiContent,
-            original_language: detectedLang,
+            transcription_text: fullText,
+            original_language: detectedLang === 'ar' ? 'Arabic' : (detectedLang === 'en' ? 'English' : 'Mixed'),
             processing_time_ms: processingTime,
             status: 'completed',
-            transcription_metadata: transcriptionMetadata
+            transcription_metadata: transcriptionMetadata,
+            segments: segments
           })
           .eq('id', dbRow.id);
+        
+        if (updateError) {
+          console.error("[DB] ❌ Update Error:", updateError.message);
+          throw new Error("Failed to save transcription results to database: " + updateError.message);
+        }
       }
 
       return new Response(JSON.stringify({ 
         success: true, 
-        transcription: aiContent,
+        transcription: fullText,
         message: "Success",
-        debug: {
-          model: model || 'google/gemini-2.0-flash-001',
-          processingTime
-        }
+        debug: { processingTime, deepgramResponse: dgData }
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
 
     } catch (innerErr: any) {
+      console.error("[PROCESS] ❌ Inner Error:", innerErr.message);
       // Update DB with failure
       if (dbRow?.id) {
         await supabaseClient

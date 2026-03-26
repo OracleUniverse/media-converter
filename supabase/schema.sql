@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS public.trans_media_transcriptions (
     original_language TEXT, -- e.g. 'English', 'Arabic', 'Mixed'
     transcription_metadata JSONB DEFAULT '{}'::jsonb, -- Store logs for transcription
     translations JSONB DEFAULT '{}'::jsonb, -- Store multiple translations { "Arabic": { "text": "...", "metadata": {...} } }
+    summary TEXT, -- AI generated summary
+    segments JSONB DEFAULT '[]'::jsonb, -- Timestamped segments for SRT [{ "start": 0, "end": 5, "text": "...", "speaker": "Speaker 1" }]
     error_message TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -98,6 +100,8 @@ EXECUTE PROCEDURE update_updated_at_column();
 ALTER TABLE public.trans_media_transcriptions ADD COLUMN IF NOT EXISTS original_language TEXT;
 ALTER TABLE public.trans_media_transcriptions ADD COLUMN IF NOT EXISTS transcription_metadata JSONB DEFAULT '{}'::jsonb;
 ALTER TABLE public.trans_media_transcriptions ADD COLUMN IF NOT EXISTS translations JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE public.trans_media_transcriptions ADD COLUMN IF NOT EXISTS summary TEXT;
+ALTER TABLE public.trans_media_transcriptions ADD COLUMN IF NOT EXISTS segments JSONB DEFAULT '[]'::jsonb;
 
 -- Migration to cleanup old columns (optional but recommended)
 -- ALTER TABLE public.trans_media_transcriptions DROP COLUMN IF EXISTS translated_text;
