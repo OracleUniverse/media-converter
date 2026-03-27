@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { FileUp, FileText, Loader2, Download, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { splitPdfIntoImages } from '../../lib/pdf';
+import { splitPdfIntoImages, extractSpatialMetadata } from '../../lib/pdf';
 
 interface DocumentConverterProps {
     userId: string;
@@ -43,8 +43,12 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
         try {
             setStatus('preparing');
             
-            // 1. Convert PDF to base64 images
-            const imageFiles = await splitPdfIntoImages(file);
+            // 1. Prepare PDF assets (Images + Spatial Map)
+            setStatus('preparing');
+            const [imageFiles, spatialMetadata] = await Promise.all([
+                splitPdfIntoImages(file),
+                extractSpatialMetadata(file)
+            ]);
             
             const base64Images = await Promise.all(imageFiles.map(async (img) => {
                 const buffer = await img.arrayBuffer();
@@ -53,10 +57,18 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
             }));
             
             // 2. Upload Original PDF (Async background)
-            // Sanitize file name to avoid 400 Bad Request on Storage upload with Arabic/Special chars
-            const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+            // Sanitize file name to avoid 400 Bad Request on Storage upload
+            const safeName = file.name.replace(/[^\x20-\x7E]/g, '_').replace(/[^a-zA-Z0-9.-]/g, '_').replace(/_{2,}/g, '_');
             const originalPath = `${userId}/orig_${Date.now()}_${safeName}`;
-            supabase.storage.from('conv_files').upload(originalPath, file);
+            
+            console.log(`[STORAGE] ⬆️ Uploading original PDF to: ${originalPath}`);
+            const { error: storageError } = await supabase.storage.from('conv_files').upload(originalPath, file);
+            
+            if (storageError) {
+                console.error("[STORAGE] ❌ Upload failed:", storageError);
+                // We'll continue anyway because the main conversion uses the base64Images payload,
+                // but this helps us see exactly WHY it's 400 (e.g. "Bucket not found")
+            }
 
             // 3. Invoke Edge Function
             setStatus('processing');
@@ -67,9 +79,11 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                     Authorization: `Bearer ${session?.access_token}`,
                 },
                 body: {
+                    userId: userId, 
                     images: base64Images,
+                    spatialMetadata,
                     originalFileName: safeName.replace(/\.[^/.]+$/, ""),
-                    model: 'google/gemini-3-flash-preview' // Flash model for faster processing
+                    model: 'google/gemini-2.0-flash-001'
                 }
             });
 
@@ -115,24 +129,24 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
         <div className="max-w-4xl mx-auto py-12">
             <div className="text-center mb-10">
                 <h1 className="text-4xl font-black tracking-tight gradient-text mb-4">AI PDF to Word Converter</h1>
-                <p className="text-[var(--text-secondary)] max-w-2xl mx-auto">
+                <p className="text-(--text-secondary) max-w-2xl mx-auto">
                     Transform standard PDFs into fully styled, editable Word documents. Our AI engine extracts layouts, fonts, and tables, preserving the visual hierarchy of your original file.
                 </p>
             </div>
 
-            <div className="bg-[var(--card-bg)] border border-[var(--border-subtle)] rounded-3xl p-8 shadow-xl">
+            <div className="bg-(--card-bg) border border-(--border-subtle) rounded-3xl p-8 shadow-xl">
                 {!file ? (
                     <div 
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={handleDrop}
                         onClick={() => fileInputRef.current?.click()}
-                        className="border-2 border-dashed border-[var(--border-subtle)] hover:border-indigo-500/50 rounded-2xl p-16 flex flex-col items-center justify-center cursor-pointer transition-all bg-[var(--bg-glass)] group"
+                        className="border-2 border-dashed border-(--border-subtle) hover:border-indigo-500/50 rounded-2xl p-16 flex flex-col items-center justify-center cursor-pointer transition-all bg-(--bg-glass) group"
                     >
                         <div className="w-16 h-16 rounded-full bg-indigo-500/10 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                             <FileUp size={28} className="text-indigo-400" />
                         </div>
-                        <h3 className="text-lg font-bold text-[var(--text-primary)] mb-2">Upload a PDF to convert</h3>
-                        <p className="text-sm text-[var(--text-muted)] text-center max-w-sm">
+                        <h3 className="text-lg font-bold text-(--text-primary) mb-2">Upload a PDF to convert</h3>
+                        <p className="text-sm text-(--text-muted) text-center max-w-sm">
                             Drag and drop your PDF file here, or click to browse. Maximum file length is 10 pages for optimal AI processing.
                         </p>
                         <input 
@@ -146,20 +160,20 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                 ) : (
                     <div className="space-y-8">
                         {/* File Preview Card */}
-                        <div className="flex items-center p-4 bg-[var(--bg-glass)] border border-[var(--border-subtle)] rounded-xl">
+                        <div className="flex items-center p-4 bg-(--bg-glass) border border-(--border-subtle) rounded-xl">
                             <div className="w-12 h-12 rounded-lg bg-red-500/10 flex items-center justify-center shrink-0">
                                 <FileText size={24} className="text-red-400" />
                             </div>
                             <div className="ml-4 flex-1 overflow-hidden">
-                                <h4 className="font-bold text-[var(--text-primary)] truncate">{file.name}</h4>
-                                <p className="text-xs text-[var(--text-muted)]">
+                                <h4 className="font-bold text-(--text-primary) truncate">{file.name}</h4>
+                                <p className="text-xs text-(--text-muted)">
                                     {(file.size / 1024 / 1024).toFixed(2)} MB • PDF Document
                                 </p>
                             </div>
                             {status === 'idle' && (
                                 <button 
                                     onClick={() => setFile(null)}
-                                    className="ml-4 p-2 text-[var(--text-muted)] hover:text-red-400 transition-colors"
+                                    className="ml-4 p-2 text-(--text-muted) hover:text-red-400 transition-colors"
                                 >
                                     Cancel
                                 </button>
@@ -193,7 +207,7 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                                         <FileText className="absolute inset-0 m-auto" size={24} />
                                     </div>
                                     <p className="font-bold tracking-wide">AI Engine is reconstructing layout & formatting...</p>
-                                    <p className="text-xs text-[var(--text-muted)] mt-2">This may take a minute for complex documents.</p>
+                                    <p className="text-xs text-(--text-muted) mt-2">This may take a minute for complex documents.</p>
                                 </div>
                             )}
 
@@ -220,8 +234,8 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                                     <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mb-6">
                                         <CheckCircle2 size={40} className="text-emerald-500" />
                                     </div>
-                                    <h3 className="text-2xl font-black text-[var(--text-primary)] mb-2">Conversion Complete!</h3>
-                                    <p className="text-[var(--text-secondary)] mb-8 text-center">
+                                    <h3 className="text-2xl font-black text-(--text-primary) mb-2">Conversion Complete!</h3>
+                                    <p className="text-(--text-secondary) mb-8 text-center">
                                         Your document has been successfully converted to Word format.
                                     </p>
                                     

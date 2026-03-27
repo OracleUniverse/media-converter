@@ -106,16 +106,23 @@ export const MediaTranscriber = ({ userId }: MediaTranscriberProps) => {
                 throw new Error(msg);
             }
 
+            // 5. Handle Hybrid Results
             const fullTranscription = data.transcription || "";
-            if (!fullTranscription) {
-                console.error("[DEEPGRAM DEBUG] Raw Response:", JSON.stringify(data.debug, null, 2));
-                throw new Error("Deepgram returned empty transcription.\n\nRaw Response:\n" + JSON.stringify(data.debug, null, 2));
+            const isAsync = data.message?.toLowerCase().includes('background');
+
+            if (isAsync) {
+                console.log(`[MEDIA TRANSCRIBER] 📡 Background processing started. Redirecting to history...`);
+                setTranscription("✨ Processing in background... Your transcription will appear in your history shortly.");
+                setStatus('success');
+            } else if (fullTranscription) {
+                console.log(`[MEDIA TRANSCRIBER] ✅ Received immediate transcription.`);
+                setTranscription(fullTranscription);
+                setStatus('success');
+            } else {
+                console.error("[DEEPGRAM DEBUG] Raw Response:", JSON.stringify(data, null, 2));
+                throw new Error("Deepgram returned no results. Please check your connection or try again.");
             }
 
-            // 5. Finalizing Results
-
-            setTranscription(fullTranscription);
-            setStatus('success');
             setProcessStep('idle');
             console.log(`[MEDIA TRANSCRIBER] ✅ All done!`);
 

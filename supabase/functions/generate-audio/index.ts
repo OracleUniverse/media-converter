@@ -45,42 +45,38 @@ serve(async (req: any) => {
       throw new Error("Text and Voice are required");
     }
 
-    console.log(`[TTS] 🎙️ Generating audio for user ${userId} using ElevenLabs voice: ${voiceName || voiceId}`);
+    console.log(`[TTS] 🎙️ Generating audio for user ${userId} using OpenAI voice: ${voiceName || voiceId}`);
 
-    // 4. Call ElevenLabs API
-    const ELEVENLABS_KEY = Deno.env.get('ELEVENLABS_API_KEY');
-    if (!ELEVENLABS_KEY) {
-      throw new Error("ELEVENLABS_API_KEY secret is missing");
+    // 4. Call OpenAI TTS API
+    const OPENAI_KEY = Deno.env.get('OPENAI_API_KEY');
+    if (!OPENAI_KEY) {
+      throw new Error("OPENAI_API_KEY secret is missing");
     }
 
-    const elevenLabsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
+    const openaiUrl = "https://api.openai.com/v1/audio/speech";
     
-    // Send request to ElevenLabs
-    const elResponse = await fetch(elevenLabsUrl, {
+    // Send request to OpenAI
+    const oaResponse = await fetch(openaiUrl, {
       method: 'POST',
       headers: {
-        'xi-api-key': ELEVENLABS_KEY,
-        'Content-Type': 'application/json',
-        'Accept': 'audio/mpeg'
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        text: text,
-        model_id: "eleven_multilingual_v2", // Supports Arabic natively
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75
-        }
+        model: "tts-1",
+        input: text,
+        voice: voiceId // alloy, echo, fable, onyx, nova, shimmer
       })
     });
 
-    if (!elResponse.ok) {
-      const errorText = await elResponse.text();
-      console.error("[TTS] ❌ ElevenLabs API Error:", errorText);
-      throw new Error(`ElevenLabs TTS failed: ${elResponse.status} ${elResponse.statusText}`);
+    if (!oaResponse.ok) {
+      const errorText = await oaResponse.text();
+      console.error("[TTS] ❌ OpenAI API Error:", errorText);
+      throw new Error(`OpenAI TTS failed: ${oaResponse.status} ${oaResponse.statusText}`);
     }
 
     // Get MP3 ArrayBuffer
-    const audioBuffer = await elResponse.arrayBuffer();
+    const audioBuffer = await oaResponse.arrayBuffer();
     
     if (!audioBuffer || audioBuffer.byteLength === 0) {
       throw new Error("Deepgram returned an empty audio buffer");

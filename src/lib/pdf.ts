@@ -1,8 +1,9 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// We must set the worker source for pdfjs-dist
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+
 if (pdfjsLib?.GlobalWorkerOptions) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.js`;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 }
 
 /**
@@ -117,5 +118,54 @@ export async function renderPageToImage(file: File, pageNum: number, scale = 1.5
     } catch (error) {
         console.error("Failed to render high-res page:", error);
         throw new Error(`Failed to render Page ${pageNum} for extraction. Please ensure the file is not corrupted and your browser is up to date.`);
+    }
+}
+/**
+ * SPATIAL METADATA EXTRACTION
+ * This function extracts the coordinates, font info, and raw text of every element.
+ * It serves as a "Structural Blueprint" for the AI during reconstruction.
+ */
+export async function extractSpatialMetadata(file: File) {
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const numPages = pdf.numPages;
+        const metadata = [];
+
+        for (let i = 1; i <= numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            const viewport = page.getViewport({ scale: 1.0 });
+
+            const items = textContent.items.map((item: any) => {
+                // transform: [scaleX, skewY, skewX, scaleY, x, y]
+                // We normalize coordinates to the viewport
+                const tx = item.transform;
+                const x = tx[4];
+                const y = viewport.height - tx[5]; // Flip Y for standard coordinates
+
+                return {
+                    text: item.str,
+                    x: Math.round(x),
+                    y: Math.round(y),
+                    width: Math.round(item.width),
+                    height: Math.round(item.height),
+                    font: item.fontName,
+                    dir: item.dir, // Direction (rtl/ltr)
+                    hasWhitespace: item.hasWhitespace
+                };
+            });
+
+            metadata.push({
+                pageIndex: i,
+                width: viewport.width,
+                height: viewport.height,
+                elements: items
+            });
+        }
+        return metadata;
+    } catch (error) {
+        console.error("Failed to extract spatial metadata:", error);
+        return [];
     }
 }

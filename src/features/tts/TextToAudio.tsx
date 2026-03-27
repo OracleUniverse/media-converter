@@ -7,11 +7,12 @@ interface TextToAudioProps {
 }
 
 const VOICES = [
-    { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel (Female, Calm)' },
-    { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi (Female, Energetic)' },
-    { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella (Female, Soft/Sweet)' },
-    { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam (Male, Deep/Authoritative)' },
-    { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni (Male, Well-rounded)' },
+    { id: 'alloy', name: 'Alloy (Neutral/Balanced)' },
+    { id: 'echo', name: 'Echo (Male/Calm)' },
+    { id: 'fable', name: 'Fable (Neutral/Narrative)' },
+    { id: 'onyx', name: 'Onyx (Male/Deep)' },
+    { id: 'nova', name: 'Nova (Female/Professional)' },
+    { id: 'shimmer', name: 'Shimmer (Female/Soft)' },
 ];
 
 export const TextToAudio = ({ userId: _userId }: TextToAudioProps) => {
@@ -116,9 +117,12 @@ export const TextToAudio = ({ userId: _userId }: TextToAudioProps) => {
                                     value={voice}
                                     onChange={(e) => setVoice(e.target.value)}
                                     className="w-full bg-(--bg-main) border border-(--border-subtle) rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all text-(--text-primary) appearance-none cursor-pointer"
+                                    style={{ colorScheme: 'dark' }} // Force standard dark colors for dropdown
                                 >
                                     {VOICES.map(v => (
-                                        <option key={v.id} value={v.id}>{v.name}</option>
+                                        <option key={v.id} value={v.id} className="bg-zinc-950 text-white py-2">
+                                            {v.name}
+                                        </option>
                                     ))}
                                 </select>
                                 <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-(--text-muted)">
@@ -131,14 +135,36 @@ export const TextToAudio = ({ userId: _userId }: TextToAudioProps) => {
                     <div className="space-y-2">
                         <label className="text-xs font-black uppercase tracking-widest text-(--text-muted) flex items-center justify-between">
                             <span className="flex items-center gap-2"><Type size={14} /> Spoken Text</span>
-                            <span className="text-zinc-500 font-medium">{text.length} / 5000</span>
+                            <div className="flex items-center gap-4">
+                                <label className="flex items-center gap-1.5 cursor-pointer text-[10px] bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-lg border border-indigo-500/20 transition-all">
+                                    <input 
+                                        type="file" 
+                                        accept=".txt" 
+                                        className="hidden" 
+                                        onChange={(e) => {
+                                            const f = e.target.files?.[0];
+                                            if (f) {
+                                                const reader = new FileReader();
+                                                reader.onload = (ev) => {
+                                                    const content = ev.target?.result as string;
+                                                    setText(content.slice(0, 5000));
+                                                    if (!title) setTitle(f.name.replace('.txt', ''));
+                                                };
+                                                reader.readAsText(f);
+                                            }
+                                        }}
+                                    />
+                                    <span>Upload TXT</span>
+                                </label>
+                                <span className="text-zinc-500 font-medium">{text.length} / 5000</span>
+                            </div>
                         </label>
                         <textarea
                             value={text}
                             onChange={(e) => setText(e.target.value)}
-                            placeholder="Type or paste the text you want the AI to speak... (Auto-detects Arabic, English, and dozens of other languages natively!)"
+                            placeholder="Type, paste, or upload a .txt file... (Auto-detects Arabic, English, and dozens of other languages natively!)"
                             maxLength={5000}
-                            className="w-full h-48 bg-(--bg-main) border border-(--border-subtle) rounded-xl px-4 py-4 text-sm focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all text-(--text-primary) placeholder:text-zinc-600 resize-y custom-scrollbar leading-relaxed"
+                             className="w-full h-48 bg-(--bg-main) border border-(--border-subtle) rounded-xl px-4 py-4 text-sm focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all text-(--text-primary) placeholder:text-zinc-600 resize-y custom-scrollbar leading-relaxed"
                             dir="auto"
                         />
                     </div>
@@ -177,7 +203,7 @@ export const TextToAudio = ({ userId: _userId }: TextToAudioProps) => {
                         )}
                     </button>
                     <p className="text-center text-[10px] font-bold uppercase tracking-widest text-(--text-muted) pt-2">
-                        Powered by ElevenLabs Multilingual AI
+                        Powered by OpenAI TTS-1 Neural AI
                     </p>
                 </div>
             </div>

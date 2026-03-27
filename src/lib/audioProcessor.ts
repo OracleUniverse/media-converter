@@ -49,9 +49,9 @@ class AudioProcessor {
         // Command explanation:
         // -vn: disable video
         // -ac 1: set audio channels to 1 (mono)
-        // -b:a 64k: set audio bitrate to 64kbps (excellent for speech, very small size)
-        // -ar 16000: set sample rate to 16kHz (standard for many AI speech models)
-        await ffmpeg.exec(['-i', inputName, '-vn', '-ac', '1', '-b:a', '64k', '-ar', '16000', outputName]);
+        // -b:a 128k: set audio bitrate to 128kbps (higher fidelity for noisy backgrounds)
+        // -ar 32000: set sample rate to 32kHz (provides wider frequency range for AI)
+        await ffmpeg.exec(['-i', inputName, '-vn', '-ac', '1', '-b:a', '128k', '-ar', '32000', outputName]);
         
         const data = await ffmpeg.readFile(outputName);
         
