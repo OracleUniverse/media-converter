@@ -26,3 +26,14 @@ tmp/
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+__pycache__/
+*.pyc
+pdf-engine/.env
+
+# Dataset/Samples
+*.pdf
+*.docx
+!public/*.pdf
+!public/*.docx

@@ -11,7 +11,9 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
     const [file, setFile] = useState<File | null>(null);
     const [status, setStatus] = useState<'idle' | 'preparing' | 'processing' | 'success' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState<string>('');
+    const [usePythonEngine, setUsePythonEngine] = useState<boolean>(true);
     const [downloadUrl, setDownloadUrl] = useState<string>('');
+    const [htmlDownloadUrl, setHtmlDownloadUrl] = useState<string>('');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -21,6 +23,7 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
             setStatus('idle');
             setErrorMsg('');
             setDownloadUrl('');
+            setHtmlDownloadUrl('');
         } else {
             setErrorMsg('Please select a valid PDF file.');
         }
@@ -34,6 +37,7 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
             setStatus('idle');
             setErrorMsg('');
             setDownloadUrl('');
+            setHtmlDownloadUrl('');
         }
     };
 
@@ -74,18 +78,65 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
             setStatus('processing');
             const { data: { session } } = await supabase.auth.getSession();
             
-            const { data, error } = await supabase.functions.invoke('convert-pdf-word', {
-                headers: {
-                    Authorization: `Bearer ${session?.access_token}`,
-                },
-                body: {
-                    userId: userId, 
-                    images: base64Images,
-                    spatialMetadata,
-                    originalFileName: safeName.replace(/\.[^/.]+$/, ""),
-                    model: 'google/gemini-2.0-flash-001'
+            let data, error;
+            
+            if (usePythonEngine) {
+                // HIGH FIDELITY (PYTHON)
+                console.log("🚀 Using Python Engine (Localhost)...");
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const response = await fetch('http://localhost:8000/convert', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const res = await response.json();
+                if (!res.success) throw new Error(res.error || "Python Engine Error");
+                
+                // Python returns base64 content, we convert to Blob
+                const byteCharacters = atob(res.content);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
                 }
-            });
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+                
+                let htmlBlob = null;
+                if (res.html_content) {
+                    const htmlBytes = atob(res.html_content);
+                    const htmlByteArray = new Uint8Array(htmlBytes.length);
+                    for (let i = 0; i < htmlBytes.length; i++) htmlByteArray[i] = htmlBytes.charCodeAt(i);
+                    htmlBlob = new Blob([htmlByteArray], { type: 'text/html' });
+                }
+
+                data = { 
+                    success: true, 
+                    filePath: `local/${res.filename}`,
+                    isLocal: true,
+                    localBlob: blob,
+                    htmlBlob: htmlBlob,
+                    htmlFilename: res.html_filename,
+                    debug: res.debug
+                };
+            } else {
+                // STANDARD (SUPABASE)
+                const { data: res, error: resErr } = await supabase.functions.invoke('convert-pdf-word', {
+                    headers: {
+                        Authorization: `Bearer ${session?.access_token}`,
+                    },
+                    body: {
+                        userId: userId,
+                        images: base64Images,
+                        spatialMetadata,
+                        originalFileName: safeName.replace(/\.[^/.]+$/, ""),
+                        model: 'google/gemini-2.0-flash-001'
+                    }
+                });
+                data = res;
+                error = resErr;
+            }
 
             if (error || !data?.success) {
                 throw new Error(error?.message || data?.error || 'Conversion failed at edge layer.');
@@ -100,22 +151,19 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                 console.groupEnd();
             }
 
-            // 4. Generate Download URL
-            const { data: urlData, error: urlError } = await supabase.storage
-                .from('conv_files')
-                .createSignedUrl(data.filePath, 3600); // 1 hour link
-
-            if (urlError) throw urlError;
-
-            // 5. Save History
-            await supabase.from('conv_documents').insert({
-                user_id: userId,
-                original_file_path: originalPath,
-                converted_file_path: data.filePath,
-                status: 'completed'
-            });
-
-            setDownloadUrl(urlData.signedUrl);
+            if (data.isLocal) {
+                setDownloadUrl(URL.createObjectURL(data.localBlob));
+                if (data.htmlBlob) {
+                    setHtmlDownloadUrl(URL.createObjectURL(data.htmlBlob));
+                }
+            } else {
+                const { data: urlData, error: urlError } = await supabase.storage
+                    .from('conv_files')
+                    .createSignedUrl(data.filePath, 3600);
+                if (urlError) throw urlError;
+                setDownloadUrl(urlData.signedUrl);
+            }
+            
             setStatus('success');
 
         } catch (err: any) {
@@ -132,6 +180,20 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                 <p className="text-(--text-secondary) max-w-2xl mx-auto">
                     Transform standard PDFs into fully styled, editable Word documents. Our AI engine extracts layouts, fonts, and tables, preserving the visual hierarchy of your original file.
                 </p>
+            </div>
+
+            <div className="flex justify-center mb-8">
+                <div 
+                    onClick={() => setUsePythonEngine(!usePythonEngine)}
+                    className="flex items-center gap-4 bg-(--bg-glass) p-2 rounded-full border border-(--border-subtle) cursor-pointer"
+                >
+                    <div className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${!usePythonEngine ? 'bg-indigo-500 text-white shadow-lg' : 'text-(--text-muted)'}`}>
+                        STANDARD (Cloud)
+                    </div>
+                    <div className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${usePythonEngine ? 'bg-emerald-500 text-white shadow-lg' : 'text-(--text-muted)'}`}>
+                        HIGH-FIDELITY (Python Local)
+                    </div>
+                </div>
             </div>
 
             <div className="bg-(--card-bg) border border-(--border-subtle) rounded-3xl p-8 shadow-xl">
@@ -239,17 +301,29 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                                         Your document has been successfully converted to Word format.
                                     </p>
                                     
-                                    <div className="flex gap-4">
+                                    <div className="flex flex-col sm:flex-row gap-4 w-full justify-center">
                                         <a 
                                             href={downloadUrl} 
                                             download 
-                                            className="btn-primary px-8 py-3 flex items-center gap-2"
+                                            className="btn-primary px-8 py-3 flex items-center justify-center gap-2"
                                         >
                                             <Download size={18} />
                                             Download .docx
                                         </a>
+                                        
+                                        {usePythonEngine && htmlDownloadUrl && (
+                                            <a 
+                                                href={htmlDownloadUrl} 
+                                                download="converted_ai.html"
+                                                className="btn-secondary px-8 py-3 flex items-center justify-center gap-2 border-emerald-500/30 hover:border-emerald-500/60 text-emerald-400"
+                                            >
+                                                <Download size={18} />
+                                                Download HTML
+                                            </a>
+                                        )}
+
                                         <button 
-                                            onClick={() => { setFile(null); setStatus('idle'); }}
+                                            onClick={() => { setFile(null); setStatus('idle'); setHtmlDownloadUrl(''); }}
                                             className="btn-secondary px-6 py-3"
                                         >
                                             Convert Another
