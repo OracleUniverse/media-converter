@@ -9,11 +9,12 @@ interface DocumentConverterProps {
 
 export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
     const [file, setFile] = useState<File | null>(null);
-    const [status, setStatus] = useState<'idle' | 'preparing' | 'processing' | 'success' | 'error'>('idle');
+    const [status, setStatus] = useState<'idle' | 'preparing' | 'processing' | 'reconstructing-html' | 'success' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState<string>('');
     const [usePythonEngine, setUsePythonEngine] = useState<boolean>(true);
     const [downloadUrl, setDownloadUrl] = useState<string>('');
     const [htmlDownloadUrl, setHtmlDownloadUrl] = useState<string>('');
+    const [reconstructedHtml, setReconstructedHtml] = useState<string>('');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -131,7 +132,7 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                         images: base64Images,
                         spatialMetadata,
                         originalFileName: safeName.replace(/\.[^/.]+$/, ""),
-                        model: 'google/gemini-2.0-flash-001'
+                        model: 'google/gemini-3-flash-preview'
                     }
                 });
                 data = res;
@@ -169,6 +170,52 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
         } catch (err: any) {
             console.error("Conversion Error:", err);
             setErrorMsg(err.message || "An unknown error occurred during conversion.");
+            setStatus('error');
+        }
+    };
+
+    const handleHtmlReconstruct = async () => {
+        if (!file) return;
+
+        try {
+            setStatus('preparing');
+            
+            // 1. Prepare PDF assets (Images in Color)
+            const imageFiles = await splitPdfIntoImages(file, 0.85, 0.7, true);
+            
+            const base64Images = await Promise.all(imageFiles.map(async (img) => {
+                const buffer = await img.arrayBuffer();
+                const base64 = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+                return { mimeType: img.type, data: base64 };
+            }));
+            
+            // 2. Invoke Reconstruction Edge Function
+            setStatus('reconstructing-html');
+            const { data: { session } } = await supabase.auth.getSession();
+            
+            const { data, error } = await supabase.functions.invoke('reconstruct-pdf-html', {
+                headers: {
+                    Authorization: `Bearer ${session?.access_token}`,
+                },
+                body: {
+                    images: base64Images,
+                    model: 'google/gemini-2.0-flash-001'
+                }
+            });
+
+            if (error || !data?.success) {
+                throw new Error(error?.message || data?.error || 'HTML Reconstruction failed.');
+            }
+            
+            // 3. Prepare Download
+            const htmlBlob = new Blob([data.html], { type: 'text/html' });
+            setHtmlDownloadUrl(URL.createObjectURL(htmlBlob));
+            setReconstructedHtml(data.html);
+            setStatus('success');
+
+        } catch (err: any) {
+            console.error("Reconstruction Error:", err);
+            setErrorMsg(err.message || "An unknown error occurred during HTML reconstruction.");
             setStatus('error');
         }
     };
@@ -245,13 +292,25 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                         {/* Status & Actions */}
                         <div className="flex flex-col items-center justify-center pt-4">
                             {status === 'idle' && (
-                                <button 
-                                    onClick={handleConvert}
-                                    className="btn-primary w-full md:w-auto px-12 py-4 text-sm font-bold tracking-widest uppercase flex items-center justify-center gap-2"
-                                >
-                                    <FileText size={18} />
-                                    Convert to Word Magic
-                                </button>
+                                <div className="flex flex-col sm:flex-row gap-4 w-full justify-center">
+                                    <button 
+                                        onClick={handleConvert}
+                                        className="btn-primary flex-1 px-8 py-4 text-sm font-bold tracking-widest uppercase flex items-center justify-center gap-2"
+                                    >
+                                        <FileText size={18} />
+                                        Convert to Word Magic
+                                    </button>
+                                    
+                                    <button 
+                                        onClick={handleHtmlReconstruct}
+                                        className="btn-secondary flex-1 px-8 py-4 text-sm font-bold tracking-widest uppercase flex items-center justify-center gap-2 border-indigo-500/30 hover:border-indigo-500 text-indigo-400"
+                                    >
+                                        <div className="w-5 h-5 rounded bg-indigo-500 flex items-center justify-center">
+                                            <span className="text-[10px] text-white">HT</span>
+                                        </div>
+                                        Pixel-Perfect HTML
+                                    </button>
+                                </div>
                             )}
 
                             {status === 'preparing' && (
@@ -270,6 +329,18 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                                     </div>
                                     <p className="font-bold tracking-wide">AI Engine is reconstructing layout & formatting...</p>
                                     <p className="text-xs text-(--text-muted) mt-2">This may take a minute for complex documents.</p>
+                                </div>
+                            )}
+
+                            {status === 'reconstructing-html' && (
+                                <div className="flex flex-col items-center text-emerald-400">
+                                    <div className="relative w-16 h-16 mb-4">
+                                        <div className="absolute inset-0 border-4 border-emerald-500/20 rounded-full"></div>
+                                        <div className="absolute inset-0 border-4 border-emerald-500 rounded-full border-t-transparent animate-spin"></div>
+                                        <div className="absolute inset-0 m-auto w-6 h-6 flex items-center justify-center font-black text-xs">HTML</div>
+                                    </div>
+                                    <p className="font-bold tracking-wide text-center">AI UI/UX Specialist is reconstructing <br/>pixel-perfect HTML structure...</p>
+                                    <p className="text-xs text-(--text-muted) mt-2">Extracting geometry, colors, and typography.</p>
                                 </div>
                             )}
 
@@ -296,25 +367,31 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                                     <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mb-6">
                                         <CheckCircle2 size={40} className="text-emerald-500" />
                                     </div>
-                                    <h3 className="text-2xl font-black text-(--text-primary) mb-2">Conversion Complete!</h3>
+                                    <h3 className="text-2xl font-black text-(--text-primary) mb-2">
+                                        {reconstructedHtml ? "Reconstruction Complete!" : "Conversion Complete!"}
+                                    </h3>
                                     <p className="text-(--text-secondary) mb-8 text-center">
-                                        Your document has been successfully converted to Word format.
+                                        {reconstructedHtml 
+                                            ? "Your document has been precisely reconstructed into high-fidelity HTML/CSS." 
+                                            : "Your document has been successfully converted to Word format."}
                                     </p>
                                     
                                     <div className="flex flex-col sm:flex-row gap-4 w-full justify-center">
-                                        <a 
-                                            href={downloadUrl} 
-                                            download 
-                                            className="btn-primary px-8 py-3 flex items-center justify-center gap-2"
-                                        >
-                                            <Download size={18} />
-                                            Download .docx
-                                        </a>
+                                        {downloadUrl && (
+                                            <a 
+                                                href={downloadUrl} 
+                                                download 
+                                                className="btn-primary px-8 py-3 flex items-center justify-center gap-2"
+                                            >
+                                                <Download size={18} />
+                                                Download .docx
+                                            </a>
+                                        )}
                                         
-                                        {usePythonEngine && htmlDownloadUrl && (
+                                        {(usePythonEngine || reconstructedHtml) && htmlDownloadUrl && (
                                             <a 
                                                 href={htmlDownloadUrl} 
-                                                download="converted_ai.html"
+                                                download={reconstructedHtml ? "reconstructed_doc.html" : "converted_ai.html"}
                                                 className="btn-secondary px-8 py-3 flex items-center justify-center gap-2 border-emerald-500/30 hover:border-emerald-500/60 text-emerald-400"
                                             >
                                                 <Download size={18} />
@@ -323,10 +400,10 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                                         )}
 
                                         <button 
-                                            onClick={() => { setFile(null); setStatus('idle'); setHtmlDownloadUrl(''); }}
+                                            onClick={() => { setFile(null); setStatus('idle'); setHtmlDownloadUrl(''); setReconstructedHtml(''); setDownloadUrl(''); }}
                                             className="btn-secondary px-6 py-3"
                                         >
-                                            Convert Another
+                                            Start New
                                         </button>
                                     </div>
                                 </div>

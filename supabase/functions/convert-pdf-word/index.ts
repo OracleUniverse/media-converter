@@ -80,7 +80,7 @@ Output ONLY raw JSON.`;
         'HTTP-Referer': 'https://supabase.com',
       },
       body: JSON.stringify({
-        model: model || 'google/gemini-2.0-flash-001',
+        model: model || 'google/gemini-3-flash-preview',
         messages: [
           { role: 'system', content: CONVERTER_PROMPT },
           { role: 'user', content: images.map((p: any) => ({

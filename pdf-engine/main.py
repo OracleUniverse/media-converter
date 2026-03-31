@@ -38,8 +38,8 @@ async def convert_pdf(file: UploadFile = File(...)):
         pages = processor.extract_layout_and_images(pdf_bytes)
         
         # Stage 2: AI extracts ALL text + detects tables/lists applying metadata
-        print(f"🤖 AI Vision analyzing {len(pages)} page(s)...")
-        reconstruction = processor.get_ai_reconstruction(pages)
+        print(f"🤖 AI Vision analyzing {len(pages)} page(s) with Multi-Pass Pipeline...")
+        reconstruction = processor.get_ai_reconstruction(pages, pdf_bytes)
         
         # Pre-Stage 3: Extract and Crop Images using PyMuPDF and AI Bounding Boxes
         print("🖼️ Cropping detected images natively from AI Bounding Boxes...")
@@ -65,7 +65,7 @@ async def convert_pdf(file: UploadFile = File(...)):
             "debug": {
                 "pages": len(pages),
                 "html_pages": len(reconstruction.get("html_pages", [])),
-                "model": "google/gemini-2.0-flash-001 (via OpenRouter)",
+                "model": "google/gemini-3-flash-preview (via OpenRouter)",
                 "rawAiOutput": reconstruction.get("raw_responses", [])
             }
         }

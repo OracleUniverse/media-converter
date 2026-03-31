@@ -14,7 +14,7 @@ if (pdfjsLib?.GlobalWorkerOptions) {
  * as Gemini (and most Vision LLMs) process images more reliably than raw PDF bytes.
  */
 
-export async function splitPdfIntoImages(file: File, scale = 0.75, quality = 0.6): Promise<File[]> {
+export async function splitPdfIntoImages(file: File, scale = 0.75, quality = 0.6, useColor = false): Promise<File[]> {
     if (file.type !== 'application/pdf') {
         return [file];
     }
@@ -50,8 +50,12 @@ export async function splitPdfIntoImages(file: File, scale = 0.75, quality = 0.6
              * Converting to grayscale reduces the entropy of the image.
              * This results in smaller JPEG/PNG file sizes and often helps the AI
              * focus on text contrast rather than color variations.
+             * 
+             * For HTML Reconstruction, we bypass this to extract colors.
              */
-            context.filter = 'grayscale(100%)';
+            if (!useColor) {
+                context.filter = 'grayscale(100%)';
+            }
 
             await page.render({
                 canvasContext: context,

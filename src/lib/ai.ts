@@ -647,7 +647,7 @@ const MODEL_TOKEN_LIMITS: Record<string, number> = {
     "gemini-flash-latest": 1048576,
     "gemini-pro-latest": 1048576,
     "google/gemini-3-flash": 1048576,
-    "google/gemini-3.1-pro-preview": 2097152,
+    "google/gemini-3-flash-preview": 2097152,
     "default": 1048576
 };
 
@@ -657,7 +657,7 @@ const MODEL_TOKEN_LIMITS: Record<string, number> = {
  */
 const PRICING_CONFIG: Record<string, { input: number; output: number }> = {
     "google/gemini-3-flash": { input: 0.10, output: 0.30 },         // Estimates
-    "google/gemini-3.1-pro-preview": { input: 1.25, output: 3.75 }, // Estimates
+    "google/gemini-3-flash-preview": { input: 1.25, output: 3.75 }, // Estimates
     "gemini-2.5-flash": { input: 0.10, output: 0.30 },
     "gemini-2.0-flash": { input: 0.10, output: 0.30 },
     "gemini-2.0-flash-lite": { input: 0.075, output: 0.225 },
@@ -868,7 +868,6 @@ function normalizeDate(val: any): string | null {
  * into the structured ExtractionResult interface. 
  * This ensures the rest of the app (UI/DB) always receives predictable data.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function normalizeResult(data: Record<string, any>): ExtractionResult {
     const v = data.vendor || {};
     const m = data.meta || {};
@@ -918,7 +917,6 @@ function normalizeResult(data: Record<string, any>): ExtractionResult {
             financials: f.bbox || null
         },
         is_confident_currency: !!m.currency,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         items: (Array.isArray(data.line_items || data.items || data.lineItems) ? (data.line_items || data.items || data.lineItems) : []).map((item: Record<string, any>) => ({
             description: item.description || null,
             quantity: typeof item.quantity === 'number' ? item.quantity : cleanNumber(item.quantity || item.qty),
@@ -1492,7 +1490,12 @@ export async function extractInvoiceDataWithPreScan(
 }
 
 // Helper to wrap console.log and capture it
-const logNarrative = (msg: string, onProgress?: Function, progress?: number, size?: number) => {
+const logNarrative = (
+    msg: string, 
+    onProgress?: (results: any[], index: number, progress: number, size?: number, isFinal?: boolean, logs?: string[]) => void, 
+    progress?: number, 
+    size?: number
+) => {
     console.log(msg);
     logEvent(msg);
     if (onProgress && progress !== undefined) {
