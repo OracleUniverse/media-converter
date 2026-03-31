@@ -199,7 +199,7 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                 },
                 body: {
                     images: base64Images,
-                    model: 'google/gemini-2.0-flash-001'
+                    model: 'google/gemini-3-flash-preview'
                 }
             });
 
