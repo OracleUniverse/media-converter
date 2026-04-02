@@ -174,8 +174,8 @@ export class KeyPool {
                 key_name: 'Environment Default',
                 key_value: DEFAULT_API_KEY,
                 provider: 'google',
-                pre_scan_model: 'google/gemini-3-flash-preview',
-                extraction_model: 'google/gemini-3-flash-preview',
+                pre_scan_model: 'google/gemini-2.0-flash-001',
+                extraction_model: 'google/gemini-2.0-flash-001',
                 status: 'active'
             }];
         }
@@ -647,7 +647,7 @@ const MODEL_TOKEN_LIMITS: Record<string, number> = {
     "gemini-flash-latest": 1048576,
     "gemini-pro-latest": 1048576,
     "google/gemini-3-flash": 1048576,
-    "google/gemini-3-flash-preview": 2097152,
+    "google/gemini-2.0-flash-001": 1048576,
     "default": 1048576
 };
 
@@ -657,7 +657,7 @@ const MODEL_TOKEN_LIMITS: Record<string, number> = {
  */
 const PRICING_CONFIG: Record<string, { input: number; output: number }> = {
     "google/gemini-3-flash": { input: 0.10, output: 0.30 },         // Estimates
-    "google/gemini-3-flash-preview": { input: 1.25, output: 3.75 }, // Estimates
+    "google/gemini-2.0-flash-001": { input: 0.10, output: 0.30 }, // Official pricing for Flash 2.0
     "gemini-2.5-flash": { input: 0.10, output: 0.30 },
     "gemini-2.0-flash": { input: 0.10, output: 0.30 },
     "gemini-2.0-flash-lite": { input: 0.075, output: 0.225 },

@@ -75,7 +75,7 @@ PHASE 2: SECTION DETECTION
 
 SECTION RULES:
 - Sections represent logical blocks:
-  header → parties → table → summary
+  header → content → tables → structured numeric blocks
 
 - Sections MUST NOT overlap
 
@@ -103,8 +103,7 @@ ROW ALIGNMENT TOLERANCE:
 - Do NOT split rows unnecessarily
 
 PARALLEL BLOCK RULE:
-- Side-by-side blocks (Seller / Client)
-  → MUST be in SAME ROW
+- Side-by-side blocks MUST be in SAME ROW
 
 ROW RULES:
 - Avoid one-element rows unless necessary
@@ -142,7 +141,7 @@ PHASE 6: ELEMENT GROUPING
 - Keep related elements together:
   - chart + title
   - heading + paragraph
-  - label + value
+  - label + value pairs
 
 ====================================================
 PHASE 7: ELEMENT TYPES
@@ -155,6 +154,7 @@ Detect:
 - list
 - chart / graph
 - image / logo
+- structured_numeric_block
 
 ----------------------------------------------------
 CHART RULE (STRICT)
@@ -178,23 +178,143 @@ TEXT VISIBILITY:
 - Expand container to fit text
 
 ====================================================
-PHASE 9: TABLE RELATIONSHIPS
+PHASE 9: STRUCTURED NUMERIC BLOCKS (CRITICAL)
+====================================================
+
+DEFINITION:
+- A structured numeric block contains:
+  - label + numeric values
+  - totals, balances, percentages, financial/statistical summaries
+
+----------------------------------------------------
+TYPE DETECTION
+----------------------------------------------------
+
+TYPE 1: KEY-VALUE PAIRS
+- Format: label → value
+
+TYPE 2: TABULAR NUMERIC GRID
+- Format: multiple aligned numeric columns
+
+Detection conditions for TYPE 2:
+- ANY row contains multiple numeric values
+- numeric values align horizontally
+- repeated numeric patterns exist
+
+----------------------------------------------------
+COLUMN PROPAGATION RULE (CRITICAL)
+----------------------------------------------------
+
+- If ANY row contains multiple numeric values:
+  → ENTIRE block becomes multi-column table
+
+- ALL rows MUST:
+  - have SAME number of columns
+  - preserve vertical alignment
+
+- Missing values MUST be filled with empty cells
+
+----------------------------------------------------
+HEADER NORMALIZATION RULE (CRITICAL)
+----------------------------------------------------
+
+- You MUST create ONE unified header row
+
+- Collect all column labels:
+  (e.g., Net worth, VAT, Gross worth)
+
+- Place them in FIRST row:
+
+  [Label] | [Col1] | [Col2] | [Col3]
+
+- Headers MUST NOT appear in multiple rows
+
+----------------------------------------------------
+COLUMN ROLE SEPARATION
+----------------------------------------------------
+
+- First column = LABEL column (text)
+- Remaining columns = NUMERIC columns
+
+- NEVER mix labels and numbers across columns
+
+----------------------------------------------------
+ROW NORMALIZATION RULE (CRITICAL)
+----------------------------------------------------
+
+- EVERY row MUST follow:
+
+  [Label] | [Value1] | [Value2] | [Value3]
+
+- If a row has fewer values:
+  → fill remaining cells with empty values
+
+----------------------------------------------------
+RENDERING RULES
+----------------------------------------------------
+
+TYPE 1:
+- Render as 2-column table
+
+TYPE 2:
+- Render as FULL TABLE:
+  <table>
+    <tr> (headers)
+    <tr> (rows)
+  </table>
+
+----------------------------------------------------
+ALIGNMENT RULES
+----------------------------------------------------
+
+- Labels → left-aligned
+- Numeric values → right-aligned
+- All numeric columns MUST align vertically
+
+----------------------------------------------------
+CONSISTENCY RULE
+----------------------------------------------------
+
+- All rows MUST share identical column count
+- Mixed layouts are NOT allowed
+
+----------------------------------------------------
+ANCHORING RULE
+----------------------------------------------------
+
+- If below a table:
+  → align with table width
+  → place directly below
+
+----------------------------------------------------
+EMPHASIS RULE
+----------------------------------------------------
+
+- Final row (Total) MUST be emphasized:
+  - bold OR stronger border OR background
+
+----------------------------------------------------
+ANTI-FLAT RULE
+----------------------------------------------------
+
+- NEVER render as plain text
+- ALWAYS use table structure
+
+FAILURE CONDITION:
+- Misaligned numbers OR mixed column structure OR scattered headers
+
+====================================================
+PHASE 10: TABLE RELATIONSHIPS
 ====================================================
 
 TABLE ANCHORING RULE:
 - Tables define layout anchors
 
-SUMMARY ALIGNMENT RULE:
-- Summary MUST:
-  - align with table width
-  - appear directly below table
-  - maintain minimal vertical gap
-
 VERTICAL FLOW RULE:
 - Elements that follow vertically stay in same section
 
 ====================================================
-PHASE 10: HTML GRID RENDERING
+PHASE 11: HTML GRID RENDERING
 ====================================================
 
 - Use table layout:
@@ -215,7 +335,7 @@ LOCAL LAYOUT:
 - block or flex allowed inside cell
 
 ====================================================
-PHASE 11: NESTED TABLES
+PHASE 12: NESTED TABLES
 ====================================================
 
 - For data tables:
@@ -223,7 +343,7 @@ PHASE 11: NESTED TABLES
   - apply borders, colspan, rowspan
 
 ====================================================
-PHASE 12: ARTIFACT PLACEHOLDERS
+PHASE 13: ARTIFACT PLACEHOLDERS
 ====================================================
 
 <div class="artifact-placeholder">[Description]</div>
@@ -242,7 +362,7 @@ ANTI-COLLAPSE RULE:
 - Always enforce height
 
 ====================================================
-PHASE 13: SPACING & DENSITY
+PHASE 14: SPACING & DENSITY
 ====================================================
 
 - Maintain compact layout
@@ -250,7 +370,7 @@ PHASE 13: SPACING & DENSITY
 - Match original density
 
 ====================================================
-PHASE 14: ZERO-OMISSION GUARANTEE
+PHASE 15: ZERO-OMISSION GUARANTEE
 ====================================================
 
 - EVERY visible element MUST be included:
@@ -258,12 +378,13 @@ PHASE 14: ZERO-OMISSION GUARANTEE
   - rows
   - charts
   - tables
+  - structured numeric blocks
   - text blocks
 
 - If unsure → INCLUDE
 
 ====================================================
-PHASE 15: SELF-CORRECTION AUDIT
+PHASE 16: SELF-CORRECTION AUDIT
 ====================================================
 
 Verify:
@@ -271,12 +392,14 @@ Verify:
 - Sections complete
 - Rows not over-split
 - Columns aligned
-- Seller/Client same row
-- Summary aligned under table
 - No missing text
 - No clipped text
 - No chart text extracted
 - No collapsed placeholders
+- Structured numeric blocks rendered as tables
+- Numeric columns aligned perfectly
+- Column count consistent across rows
+- Headers unified in one row
 - Layout matches original
 
 ====================================================
@@ -284,7 +407,7 @@ FINAL OUTPUT
 ====================================================
 
 - Output full HTML document
-- Include CSS in <style>
+- Include CSS inside <style>
 
 STRICT RULE:
 - Output ONLY HTML
@@ -301,7 +424,7 @@ STRICT RULE:
         'HTTP-Referer': 'https://supabase.com',
       },
       body: JSON.stringify({
-        model: model || 'google/gemini-3-flash-preview',
+        model: model || 'google/gemini-2.0-flash-001',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { 

@@ -71,7 +71,7 @@ class PDFProcessor:
                     })
                 
                 response = self.client.chat.completions.create(
-                    model="google/gemini-3-flash-preview",
+                    model="google/gemini-2.0-flash-001",
                     messages=[{"role": "user", "content": msg_content}],
                     response_format={"type": "json_object"}
                 )

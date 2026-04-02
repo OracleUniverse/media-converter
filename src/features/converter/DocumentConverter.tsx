@@ -132,7 +132,7 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                         images: base64Images,
                         spatialMetadata,
                         originalFileName: safeName.replace(/\.[^/.]+$/, ""),
-                        model: 'google/gemini-3-flash-preview'
+                        model: 'google/gemini-2.0-flash-001'
                     }
                 });
                 data = res;
@@ -199,7 +199,7 @@ export const DocumentConverter = ({ userId }: DocumentConverterProps) => {
                 },
                 body: {
                     images: base64Images,
-                    model: 'google/gemini-3-flash-preview'
+                    model: 'google/gemini-2.0-flash-001'
                 }
             });
 

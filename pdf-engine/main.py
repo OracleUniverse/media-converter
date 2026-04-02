@@ -65,7 +65,7 @@ async def convert_pdf(file: UploadFile = File(...)):
             "debug": {
                 "pages": len(pages),
                 "html_pages": len(reconstruction.get("html_pages", [])),
-                "model": "google/gemini-3-flash-preview (via OpenRouter)",
+                "model": "google/gemini-2.0-flash-001 (via OpenRouter)",
                 "rawAiOutput": reconstruction.get("raw_responses", [])
             }
         }
