@@ -19,7 +19,26 @@ interface DocumentConverterProps {
 function wrapAiHtml(html: string): string {
     return `
     <div class="pdf-page-container" style="width: 100%; overflow-x: auto; padding: 20px 0; background: #f8fafc;">
-        <div class="pdf-page semantic-grid-page" style="width: 1024px; min-height: 1400px; background: white; margin: 0 auto; box-shadow: 0 10px 25px rgba(0,0,0,0.15); border-radius: 4px; padding: 40px; box-sizing: border-box; overflow: hidden; position: relative;">
+        <style>
+            .semantic-grid-page {
+                font-family: 'Amiri', 'Traditional Arabic', 'Times New Roman', serif;
+                line-height: 1.6;
+                color: #1a1a1a;
+            }
+            .semantic-grid-page table[border="1"] {
+                border: 1px solid #000;
+                border-collapse: collapse;
+                margin: 10px 0;
+            }
+            .semantic-grid-page table[border="1"] td {
+                border: 1px solid #000;
+                padding: 8px;
+            }
+            .semantic-grid-page [dir="rtl"] {
+                text-align: right;
+            }
+        </style>
+        <div class="pdf-page semantic-grid-page" style="width: 1024px; min-height: auto; background: white; margin: 0 auto; box-shadow: 0 10px 25px rgba(0,0,0,0.15); border-radius: 4px; padding: 40px; box-sizing: border-box; overflow: visible; position: relative;">
             ${html}
         </div>
     </div>`;
@@ -80,7 +99,9 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
             const base64Crop = canvas.toDataURL('image/jpeg', 0.85);
 
             const placeholderPattern = new RegExp(`<div[^>]+data-artifact-id="${artifact.id}"[^>]*>.*?</div>`, 'g');
-            bakedHtml = bakedHtml.replace(placeholderPattern, `<img src="${base64Crop}" style="width:100%; height:auto; display:block; border-radius:4px;" alt="${artifact.description}" />`);
+            
+            // PIXEL-PRECISE RENDERING: Use absolute pixel dimensions from the BBox
+            bakedHtml = bakedHtml.replace(placeholderPattern, `<img src="${base64Crop}" style="width:${width}px; height:${height}px; display:block; border-radius:4px;" alt="${artifact.description}" />`);
         }
         return bakedHtml;
     };
