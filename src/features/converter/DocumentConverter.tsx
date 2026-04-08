@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { FileUp, FileText, Loader2, Download } from 'lucide-react';
+import { FileUp, FileText, Loader2, Download, Zap } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { splitPdfIntoImages } from '../../lib/pdf';
 
@@ -23,7 +23,6 @@ function wrapAiHtml(html: string): string {
             .semantic-grid-page {
                 font-family: 'Amiri', 'Traditional Arabic', 'Times New Roman', serif;
                 line-height: 1.6;
-                color: #1a1a1a;
             }
             .semantic-grid-page table[border="1"] {
                 border: 1px solid #000;
@@ -36,6 +35,10 @@ function wrapAiHtml(html: string): string {
             }
             .semantic-grid-page [dir="rtl"] {
                 text-align: right;
+            }
+            .semantic-grid-page img {
+                max-width: 100%;
+                object-fit: contain;
             }
         </style>
         <div class="pdf-page semantic-grid-page" style="width: 1024px; min-height: auto; background: white; margin: 0 auto; box-shadow: 0 10px 25px rgba(0,0,0,0.15); border-radius: 4px; padding: 40px; box-sizing: border-box; overflow: visible; position: relative;">
@@ -50,6 +53,7 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
     const [errorMsg, setErrorMsg] = useState<string>('');
     const [downloadUrl, setDownloadUrl] = useState<string>('');
     const [htmlDownloadUrl, setHtmlDownloadUrl] = useState<string>('');
+    const [simpleHtmlUrl, setSimpleHtmlUrl] = useState<string>('');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -58,6 +62,7 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
             setFile(selected);
             setDownloadUrl('');
             setHtmlDownloadUrl('');
+            setSimpleHtmlUrl('');
             setStatus('idle');
             setErrorMsg('');
         }
@@ -70,6 +75,7 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
             setFile(dropped);
             setDownloadUrl('');
             setHtmlDownloadUrl('');
+            setSimpleHtmlUrl('');
             setStatus('idle');
             setErrorMsg('');
         }
@@ -98,10 +104,13 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
             ctx.drawImage(img, xmin, ymin, width, height, 0, 0, width, height);
             const base64Crop = canvas.toDataURL('image/jpeg', 0.85);
 
+            // FIND placeholder and REPLACE in-place
             const placeholderPattern = new RegExp(`<div[^>]+data-artifact-id="${artifact.id}"[^>]*>.*?</div>`, 'g');
             
-            // PIXEL-PRECISE RENDERING: Use absolute pixel dimensions from the BBox
-            bakedHtml = bakedHtml.replace(placeholderPattern, `<img src="${base64Crop}" style="width:${width}px; height:${height}px; display:block; border-radius:4px;" alt="${artifact.description}" />`);
+            // IN-GRID RENDERING: Restore artifacts to their respectful locations
+            bakedHtml = bakedHtml.replace(placeholderPattern, 
+                `<img src="${base64Crop}" style="width:100%; height:100%; display:block; object-fit:none;" alt="${artifact.description}" />`
+            );
         }
         return bakedHtml;
     };
@@ -130,15 +139,18 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
         try {
             setStatus('preparing');
             const imageFiles = await splitPdfIntoImages(file, 1.0, 1.0, true);
-            const base64Images = await Promise.all(imageFiles.map(async (img) => {
+            console.log(`📄 PDF Split complete: ${imageFiles.length} pages generated.`);
+            
+            const base64Images = await Promise.all(imageFiles.map(async (img, idx) => {
                 const buffer = await img.arrayBuffer();
                 const base64 = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+                console.log(`🖼️ Page ${idx + 1} ready for transmission.`);
                 return { mimeType: img.type, data: base64, url: URL.createObjectURL(img) };
             }));
             
             setStatus('reconstructing-html');
             const { data: { session } } = await supabase.auth.getSession();
-            let finalHtml = '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8" />\n<style>body { font-family: sans-serif; background-color: #e5e7eb; padding: 20px; } .semantic-grid-page table { table-layout: fixed; width: 100%; border-collapse: collapse; } .semantic-grid-page td { border: 0px solid #eee; vertical-align: top; padding: 4px; overflow: visible; font-size: 14px; }</style>\n</head>\n<body>\n';
+            let finalHtmlContent = '';
 
             for (let i = 0; i < base64Images.length; i++) {
                 const imgObj = new Image();
@@ -153,15 +165,116 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
                 
                 if (error || !data?.success) throw new Error(error?.message || data?.error || 'Reconstruction failed');
                 
+                console.log(`📊 AI Usage for Page ${i + 1}:`, {
+                    inputTokens: data.usage?.prompt_tokens,
+                    outputTokens: data.usage?.completion_tokens,
+                    totalTokens: data.usage?.total_tokens,
+                    resolution: data.resolution
+                });
+
                 if (data.html) {
-                    // BAKE THIS PAGE IMMEDIATELY to avoid ID collisions across pages
                     const bakedPageHtml = await bakePortableHtml(wrapAiHtml(data.html), data.artifacts || [], base64Images[i].url);
-                    finalHtml += bakedPageHtml;
+                    finalHtmlContent += bakedPageHtml;
                 }
             }
-            finalHtml += '\n</body>\n</html>';
+            const finalHtml = `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8" />\n<style>body { font-family: sans-serif; background-color: #e5e7eb; padding: 20px; } .page { page-break-after: always; }</style>\n</head>\n<body>\n${finalHtmlContent}\n</body>\n</html>`;
+            console.log(`✅ Reconstruction Complete! Total size: ${finalHtml.length} characters.`);
             const htmlBlob = new Blob([finalHtml], { type: 'text/html' });
             setHtmlDownloadUrl(URL.createObjectURL(htmlBlob));
+            setStatus('success');
+        } catch (err: any) {
+            setErrorMsg(err.message || "Unknown error");
+            setStatus('error');
+        }
+    };
+
+    const handleSimpleClone = async () => {
+        if (!file) return;
+        try {
+            setStatus('preparing');
+            setErrorMsg('');
+            const imageFiles = await splitPdfIntoImages(file, 1.0, 1.0, true);
+            console.log(`📄 PDF Split complete: ${imageFiles.length} pages generated.`);
+            
+            const base64Images = await Promise.all(imageFiles.map(async (img, idx) => {
+                const buffer = await img.arrayBuffer();
+                const base64 = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+                console.log(`🖼️ Page ${idx + 1} ready for transmission.`);
+                return { mimeType: img.type, data: base64 };
+            }));
+
+            setStatus('reconstructing-html');
+            const { data: { session } } = await supabase.auth.getSession();
+            let aggregatedHtml = '';
+
+            for (let i = 0; i < base64Images.length; i++) {
+                const imgData = base64Images[i];
+                const imgObj = new Image();
+                imgObj.src = `data:${imgData.mimeType};base64,${imgData.data}`;
+                await new Promise(r => imgObj.onload = r);
+                const dims = { width: imgObj.width, height: imgObj.height };
+
+                console.log(`🚀 Sending Page ${i + 1} to AI (Simple Clone Mode)...`);
+                
+                const { data, error } = await supabase.functions.invoke('reconstruct-pdf-html', {
+                    headers: { Authorization: `Bearer ${session?.access_token}` },
+                    body: { 
+                        images: [imgData], 
+                        model: 'google/gemini-2.0-flash-001', 
+                        dimensions: dims
+                    }
+                });
+
+                if (error || !data?.success) throw new Error(error?.message || data?.error || 'Simple Clone failed');
+                
+                console.log(`📊 AI Usage for Page ${i + 1} (Clone):`, {
+                    inputTokens: data.usage?.prompt_tokens,
+                    outputTokens: data.usage?.completion_tokens,
+                    totalTokens: data.usage?.total_tokens,
+                    htmlLength: data.html?.length || 0
+                });
+
+                if (data.html) {
+                    console.log(`📜 RAW AI SOURCE CODE (Page ${i + 1}):\n`, data.html);
+                    aggregatedHtml += data.html;
+                    
+                    // Force a Word-compatible Page Break after each page (except potentially the last)
+                    if (i < base64Images.length - 1) {
+                        aggregatedHtml += `<br style="page-break-before: always; clear: both; mso-break-type: section-break;" />`;
+                    }
+                }
+            }
+
+            const masterExportScript = `
+<script>
+function exportToWord() {
+  var header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
+        "xmlns:w='urn:schemas-microsoft-com:office:word' "+
+        "xmlns='http://www.w3.org/TR/REC-html40'>"+
+        "<head><meta charset='utf-8'><title>Export HTML to Word</title></head><body>";
+  var footer = "</body></html>";
+  var sourceHTML = header + document.getElementById("content-to-export").innerHTML + footer;
+  
+  var source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
+  var fileDownload = document.createElement("a");
+  document.body.appendChild(fileDownload);
+  fileDownload.href = source;
+  fileDownload.download = 'document.doc';
+  fileDownload.click();
+  document.body.removeChild(fileDownload);
+}
+</script>
+            `;
+
+            const finalHtml = `<!DOCTYPE html><html><head>${masterExportScript}</head><body style="margin:0;padding:20px;background:#f0f2f5;">
+                <button onclick="exportToWord()" style="position:fixed;top:10px;right:10px;z-index:9999;padding:12px 24px;background:#007bff;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,0.2);">Export Full Document to Word</button>
+                <div id="content-to-export">
+                    ${aggregatedHtml}
+                </div>
+            </body></html>`;
+            console.log(`✅ Simple Clone Complete! Total aggregated HTML size: ${finalHtml.length} characters.`);
+            const blob = new Blob([finalHtml], { type: 'text/html' });
+            setSimpleHtmlUrl(URL.createObjectURL(blob));
             setStatus('success');
         } catch (err: any) {
             setErrorMsg(err.message || "Unknown error");
@@ -193,7 +306,10 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
                         </div>
                         <div className="flex flex-col sm:flex-row gap-4 w-full justify-center">
                             <button onClick={handleConvert} className="btn-primary flex-1 px-8 py-4">Word Magic</button>
-                            <button onClick={handleHtmlReconstruct} className="btn-secondary flex-1 px-8 py-4 text-xs tracking-widest uppercase">Forensic HTML Grid</button>
+                            <button onClick={handleHtmlReconstruct} className="btn-secondary flex-1 px-8 py-4 text-[10px] tracking-widest uppercase">Forensic Grid</button>
+                            <button onClick={handleSimpleClone} className="btn-secondary flex-1 px-8 py-4 text-[10px] tracking-widest uppercase border-amber-500/30 text-amber-500 flex items-center justify-center gap-2">
+                                <Zap size={14} /> Simple Clone
+                            </button>
                         </div>
                     </div>
                 )}
@@ -209,7 +325,8 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
                 <div className="mt-12 flex flex-col sm:flex-row gap-4 justify-center animate-in fade-in zoom-in">
                     {downloadUrl && <a href={downloadUrl} download className="btn-primary px-12 py-4 flex items-center gap-3"><Download size={20} /> Word</a>}
                     {htmlDownloadUrl && <a href={htmlDownloadUrl} download="forensic_reconstruction.html" className="btn-secondary px-12 py-4 flex items-center gap-3 border-emerald-500/30 text-emerald-400"><Download size={20} /> HTML</a>}
-                    <button onClick={() => { setFile(null); setStatus('idle'); setHtmlDownloadUrl(''); }} className="btn-secondary px-8 py-4 opacity-60">New File</button>
+                    {simpleHtmlUrl && <a href={simpleHtmlUrl} download="ai_simple_clone.html" className="btn-secondary px-12 py-4 flex items-center gap-3 border-amber-500/30 text-amber-500"><Download size={20} /> Clone</a>}
+                    <button onClick={() => { setFile(null); setStatus('idle'); setHtmlDownloadUrl(''); setSimpleHtmlUrl(''); }} className="btn-secondary px-8 py-4 opacity-60">New File</button>
                 </div>
             )}
         </div>
