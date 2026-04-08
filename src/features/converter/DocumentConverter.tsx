@@ -139,12 +139,12 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
         try {
             setStatus('preparing');
             const imageFiles = await splitPdfIntoImages(file, 1.0, 1.0, true);
-            console.log(`📄 PDF Split complete: ${imageFiles.length} pages generated.`);
+            // console.log(`📄 PDF Split complete: ${imageFiles.length} pages generated.`);
             
-            const base64Images = await Promise.all(imageFiles.map(async (img, idx) => {
+            const base64Images = await Promise.all(imageFiles.map(async (img) => {
                 const buffer = await img.arrayBuffer();
                 const base64 = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
-                console.log(`🖼️ Page ${idx + 1} ready for transmission.`);
+                // console.log(`🖼️ Page ${idx + 1} ready for transmission.`);
                 return { mimeType: img.type, data: base64, url: URL.createObjectURL(img) };
             }));
             
@@ -165,12 +165,14 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
                 
                 if (error || !data?.success) throw new Error(error?.message || data?.error || 'Reconstruction failed');
                 
+                /*
                 console.log(`📊 AI Usage for Page ${i + 1}:`, {
                     inputTokens: data.usage?.prompt_tokens,
                     outputTokens: data.usage?.completion_tokens,
                     totalTokens: data.usage?.total_tokens,
                     resolution: data.resolution
                 });
+                */
 
                 if (data.html) {
                     const bakedPageHtml = await bakePortableHtml(wrapAiHtml(data.html), data.artifacts || [], base64Images[i].url);
@@ -178,7 +180,7 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
                 }
             }
             const finalHtml = `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8" />\n<style>body { font-family: sans-serif; background-color: #e5e7eb; padding: 20px; } .page { page-break-after: always; }</style>\n</head>\n<body>\n${finalHtmlContent}\n</body>\n</html>`;
-            console.log(`✅ Reconstruction Complete! Total size: ${finalHtml.length} characters.`);
+            // console.log(`✅ Reconstruction Complete! Total size: ${finalHtml.length} characters.`);
             const htmlBlob = new Blob([finalHtml], { type: 'text/html' });
             setHtmlDownloadUrl(URL.createObjectURL(htmlBlob));
             setStatus('success');
@@ -194,12 +196,12 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
             setStatus('preparing');
             setErrorMsg('');
             const imageFiles = await splitPdfIntoImages(file, 1.0, 1.0, true);
-            console.log(`📄 PDF Split complete: ${imageFiles.length} pages generated.`);
+            // console.log(`📄 PDF Split complete: ${imageFiles.length} pages generated.`);
             
-            const base64Images = await Promise.all(imageFiles.map(async (img, idx) => {
+            const base64Images = await Promise.all(imageFiles.map(async (img) => {
                 const buffer = await img.arrayBuffer();
                 const base64 = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
-                console.log(`🖼️ Page ${idx + 1} ready for transmission.`);
+                // console.log(`🖼️ Page ${idx + 1} ready for transmission.`);
                 return { mimeType: img.type, data: base64 };
             }));
 
@@ -214,7 +216,7 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
                 await new Promise(r => imgObj.onload = r);
                 const dims = { width: imgObj.width, height: imgObj.height };
 
-                console.log(`🚀 Sending Page ${i + 1} to AI (Simple Clone Mode)...`);
+                // console.log(`🚀 Sending Page ${i + 1} to AI (Simple Clone Mode)...`);
                 
                 const { data, error } = await supabase.functions.invoke('reconstruct-pdf-html', {
                     headers: { Authorization: `Bearer ${session?.access_token}` },
@@ -227,15 +229,17 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
 
                 if (error || !data?.success) throw new Error(error?.message || data?.error || 'Simple Clone failed');
                 
+                /*
                 console.log(`📊 AI Usage for Page ${i + 1} (Clone):`, {
                     inputTokens: data.usage?.prompt_tokens,
                     outputTokens: data.usage?.completion_tokens,
                     totalTokens: data.usage?.total_tokens,
                     htmlLength: data.html?.length || 0
                 });
+                */
 
                 if (data.html) {
-                    console.log(`📜 RAW AI SOURCE CODE (Page ${i + 1}):\n`, data.html);
+                    // console.log(`📜 RAW AI SOURCE CODE (Page ${i + 1}):\n`, data.html);
                     aggregatedHtml += data.html;
                     
                     // Force a Word-compatible Page Break after each page (except potentially the last)
@@ -272,7 +276,7 @@ function exportToWord() {
                     ${aggregatedHtml}
                 </div>
             </body></html>`;
-            console.log(`✅ Simple Clone Complete! Total aggregated HTML size: ${finalHtml.length} characters.`);
+            // console.log(`✅ Simple Clone Complete! Total aggregated HTML size: ${finalHtml.length} characters.`);
             const blob = new Blob([finalHtml], { type: 'text/html' });
             setSimpleHtmlUrl(URL.createObjectURL(blob));
             setStatus('success');
