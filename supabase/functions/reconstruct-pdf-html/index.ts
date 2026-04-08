@@ -43,16 +43,18 @@ CRITICAL FORENSIC RULES (STRICT ADHERENCE)
 
 2. GRID INTEGRITY: You MUST mirror the page architecture exactly. If elements are side-by-side, you MUST put them in a single <tr> with two <td style="width:50%;"> cells. NO exceptions.
 
-3. VISIBLE ARTIFACT PLACEHOLDERS: For EVERY visual artifact (Logo, Icon, Photo, Chart, or Map), output ONLY a dashed <table> box. 
+3. VISIBLE ARTIFACT PLACEHOLDERS (CHARTS/LOGOS ONLY): For graphical artifacts (Logo, Icon, Photo, Chart, or Map), output ONLY a dashed <table> box. 
    <table style="width:100%; border:2px dashed #cbd5e1; background:#f8fafc; mso-height-rule:exactly; height:150px; text-align:center; vertical-align:middle; border-radius:8px;">
      <tr style="mso-height-rule:exactly; height:150px;">
        <td style="mso-height-rule:exactly; height:150px;"><b>[ARTIFACT TYPE] PLACEHOLDER</b></td>
      </tr>
    </table>
 
-4. NO MODERN CSS: Build the layout using rigid HTML <table style="width:100%;"> including the page wrapper: <div style="width: ${pageWidth}px; min-height: ${pageHeight}px; background: white; margin: 0 auto; font-family: Arial, sans-serif;">...</div>
+4. DATA TABLE SUPREMACY: Grids of pure text or numbers (Financials, Lists, Schedules) are NOT artifacts. You MUST extract these as real HTML <table> elements. They are structural text. Do NOT black-box them.
 
-5. RECORD STRUCTURAL TEXT ONLY: Output ONLY the high-level structural text (titles, paragraphs, and data tables that are NOT part of a chart). If you are unsure if text belongs to an artifact, EXCLUDE IT.
+5. NO MODERN CSS: Build the layout using rigid HTML <table style="width:100%;"> including the page wrapper: <div style="width: ${pageWidth}px; min-height: ${pageHeight}px; background: white; margin: 0 auto; font-family: Arial, sans-serif;">...</div>
+
+6. RECORD STRUCTURAL TEXT ONLY: Output the high-level structural text (titles, paragraphs, and Data Tables). If text is inside a GRAPHICAL chart (Rule #3), exclude it.
 
 STRICT TECHNICAL RULES:
 1. RESPONSE MUST BE JSON: { "html": "..." }.
