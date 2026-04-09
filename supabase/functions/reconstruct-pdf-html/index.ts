@@ -37,36 +37,60 @@ Perform a complete forensic reconstruction of the provided document image into a
 CRITICAL FORENSIC RULES (STRICT ADHERENCE)
 ====================================================
 
-1. ABSOLUTE DATA PROHIBITION (CHART BLACK-BOX): You are STRICTLY FORBIDDEN from extracting any text or numbers found inside a visual artifact (Chart, Logo, Icon). 
-   - FORBIDDEN: Legends (■), Category names (e.g. 'Category 1'), Series titles ('Series A'), Percentages ('25%'), Axis labels, and any numeric values. 
-   - RULE: If text is physically overlaid on an artifact, it is INVISIBLE to your OCR. Do not record it. Any leakage is a TOTAL FAILURE.
+1. ABSOLUTE CHART BLACK-BOX (PRIORITY 1): Identify all visual visualizations FIRST.
+   - DEFINITION: Any element containing non-textual graphical ink (Bars, Pie Slices, Axis Lines, Curves, or Legend Icons ■).
+   - MANDATORY SILENCE: If an element is a Chart/Logo, you are STRICTLY FORBIDDEN from extracting any text or numbers from it. You MUST output ONLY the placeholder <table>.
 
-2. GRID INTEGRITY: You MUST mirror the page architecture exactly. If elements are side-by-side, you MUST put them in a single <tr> with two <td style="width:50%;"> cells. NO exceptions.
+2. STRUCTURAL TABLE SUPREMACY (PRIORITY 2): Grids of PURE readable text (Invoices, Financials, Schedules, Contact Lists) are structural.
+   - RULE: If a grid is 100% alphanumeric text/numbers and lacks graphical ink (no axes, no bars), extract it as a real HTML <table>. 
 
-3. VISIBLE ARTIFACT PLACEHOLDERS (CHARTS/LOGOS ONLY): For graphical artifacts (Logo, Icon, Photo, Chart, or Map), output ONLY a dashed <table> box. 
-   <table style="width:100%; border:2px dashed #cbd5e1; background:#f8fafc; mso-height-rule:exactly; height:150px; text-align:center; vertical-align:middle; border-radius:8px;">
+3. VISIBLE ARTIFACT PLACEHOLDERS: For EVERY graphical artifact identified in Rule #1, output ONLY the dashed <table> box:
+   <table data-artifact-id="artifact_N" style="width:100%; border:2px dashed #cbd5e1; background:#f8fafc; mso-height-rule:exactly; height:150px; text-align:center; vertical-align:middle;">
      <tr style="mso-height-rule:exactly; height:150px;">
        <td style="mso-height-rule:exactly; height:150px;"><b>[ARTIFACT TYPE] PLACEHOLDER</b></td>
      </tr>
    </table>
 
-4. DATA TABLE SUPREMACY: Grids of pure text or numbers (Financials, Lists, Schedules) are NOT artifacts. You MUST extract these as real HTML <table> elements. They are structural text. Do NOT black-box them.
+4. GRID INTEGRITY (LAYOUT): Use side-by-side <td> cells for page columns. 
+   - SIDE-BY-SIDE: If two artifacts are horizontal, you MUST use one <tr> with two <td style="width:50%;"> cells. NEVER stack them in a single cell or multiple rows. 
+   - HEIGHTS: Use height:auto for all text rows.
 
-5. NO MODERN CSS: Build the layout using rigid HTML <table style="width:100%;"> including the page wrapper: <div style="width: ${pageWidth}px; min-height: ${pageHeight}px; background: white; margin: 0 auto; font-family: Arial, sans-serif;">...</div>
+5. NO MODERN CSS: Use rigid HTML <table> including the page wrapper: <div style="width: ${pageWidth}px; min-height: ${pageHeight}px; background: white; margin: 0 auto; font-family: Arial, sans-serif;">...</div>
 
-6. RECORD STRUCTURAL TEXT ONLY: Output the high-level structural text (titles, paragraphs, and Data Tables). If text is inside a GRAPHICAL chart (Rule #3), exclude it.
+6. RECORD STRUCTURAL TEXT ONLY: Output titles and paragraphs. Use fluid heights (height:auto).
 
 STRICT TECHNICAL RULES:
-1. RESPONSE MUST BE JSON: { "html": "..." }.
-2. NO BASE64 DATA.
-3. NO LAZY OUTPUTS.
+1. RESPONSE MUST BE JSON (DO NOT OMIT THIS):
+{
+  "html": "...",
+  "artifacts": [
+    {
+      "id": "artifact_1",
+      "type": "chart | logo | photo",
+      "description": "Short description",
+      "bbox": [ymin, xmin, ymax, xmax]
+    }
+  ]
+}
+2. BBOX COORDINATES: Use absolute pixels matching ${pageWidth}x${pageHeight}.
+3. NO BASE64 DATA.
+4. NO LAZY OUTPUTS.
+5. YOUR ENTIRE RESPONSE MUST BE A VALID JSON OBJECT.
 `;
+
+    const isGptModel = chosenModel.includes('gpt-');
+    const isClaudeModel = chosenModel.includes('claude-');
+    const maxTokens = isGptModel ? 4096 : (isClaudeModel ? 8192 : 30000);
+
+    console.log(`📡 Sending request to OpenRouter [${chosenModel}] (max_tokens: ${maxTokens})...`);
 
     const aiResponse = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${OPENROUTER_KEY}`,
         'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://media-converter.supabase.co', // Recommended by OpenRouter
+        'X-Title': 'PDF Forensic Media Converter',           // Recommended by OpenRouter
       },
       body: JSON.stringify({
         model: chosenModel,
@@ -75,7 +99,7 @@ STRICT TECHNICAL RULES:
           {
             role: 'user',
             content: [
-              { type: 'text', text: `Reconstruct this page layout. Resolution: ${pageWidth}x${pageHeight}.` },
+              { type: 'text', text: `Reconstruct this page layout as a valid JSON object. Resolution: ${pageWidth}x${pageHeight}.` },
               ...images.map((img: any) => ({
                 type: 'image_url',
                 image_url: { url: `data:${img.mimeType};base64,${img.data}` }
@@ -84,13 +108,33 @@ STRICT TECHNICAL RULES:
           }
         ],
         temperature: 0.1,
-        max_tokens: 30000,
+        max_tokens: maxTokens,
         response_format: overridePrompt ? undefined : { type: "json_object" }
       })
     });
 
     const aiData = await aiResponse.json();
+    
+    if (aiData.error) {
+        console.error("OpenRouter API Error:", aiData.error);
+        throw new Error(`OpenRouter Error: ${aiData.error.message || JSON.stringify(aiData.error)}`);
+    }
+
     let rawText = aiData.choices?.[0]?.message?.content || "";
+    const finishReason = aiData.choices?.[0]?.finish_reason || "unknown";
+    
+    console.log(`📥 Raw AI Response (Length: ${rawText.length}, Reason: ${finishReason}):`, rawText.substring(0, 200) + (rawText.length > 200 ? "..." : ""));
+    
+    // Safety check for empty content
+    if (!rawText || rawText.trim().length === 0) {
+        return new Response(JSON.stringify({
+            success: false,
+            error: `AI returned empty content. Finish Reason: ${finishReason}`,
+            finishReason,
+            rawAiOutput: rawText,
+            usage: aiData.usage
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
     
     let finalPayload;
     
@@ -162,8 +206,10 @@ STRICT TECHNICAL RULES:
       success: true, 
       html: finalPayload.html,
       artifacts: finalPayload.artifacts || [],
+      usage: aiData.usage || {},
       resolution: { width: pageWidth, height: pageHeight },
-      usage: aiData.usage || {}
+      finishReason,
+      rawAiOutput: rawText
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })

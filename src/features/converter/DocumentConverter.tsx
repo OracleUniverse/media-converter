@@ -54,6 +54,7 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
     const [downloadUrl, setDownloadUrl] = useState<string>('');
     const [htmlDownloadUrl, setHtmlDownloadUrl] = useState<string>('');
     const [simpleHtmlUrl, setSimpleHtmlUrl] = useState<string>('');
+    const [gpt4HtmlUrl, setGpt4HtmlUrl] = useState<string>('');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -63,6 +64,7 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
             setDownloadUrl('');
             setHtmlDownloadUrl('');
             setSimpleHtmlUrl('');
+            setGpt4HtmlUrl('');
             setStatus('idle');
             setErrorMsg('');
         }
@@ -76,6 +78,7 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
             setDownloadUrl('');
             setHtmlDownloadUrl('');
             setSimpleHtmlUrl('');
+            setGpt4HtmlUrl('');
             setStatus('idle');
             setErrorMsg('');
         }
@@ -89,27 +92,34 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
 
         for (const artifact of artifacts) {
             const [ymin, xmin, ymax, xmax] = artifact.bbox;
-            const width = xmax - xmin;
-            const height = ymax - ymin;
+            
+            // FIND placeholder and REPLACE in-place
+            // Use [\s\S]*? to match across multiple lines (dotAll)
+            const placeholderPattern = new RegExp(`<(div|table)[^>]+data-artifact-id="${artifact.id}"[^>]*>[\\s\\S]*?</(div|table)>`, 'i');
+            
+            // Forensic coordinate rounding
+            const ryMin = Math.floor(ymin);
+            const rxMin = Math.floor(xmin);
+            const ryMax = Math.ceil(ymax);
+            const rxMax = Math.ceil(xmax);
+            const rWidth = rxMax - rxMin;
+            const rHeight = ryMax - ryMin;
 
-            if (width <= 0 || height <= 0) continue;
+            if (rWidth <= 0 || rHeight <= 0) continue;
 
+            // Load and Slice
             const img = new Image();
             img.crossOrigin = "anonymous";
             img.src = imageUrl;
             await new Promise(r => img.onload = r);
 
-            canvas.width = width;
-            canvas.height = height;
-            ctx.drawImage(img, xmin, ymin, width, height, 0, 0, width, height);
-            const base64Crop = canvas.toDataURL('image/jpeg', 0.85);
-
-            // FIND placeholder and REPLACE in-place
-            const placeholderPattern = new RegExp(`<div[^>]+data-artifact-id="${artifact.id}"[^>]*>.*?</div>`, 'g');
+            canvas.width = rWidth;
+            canvas.height = rHeight;
+            ctx.drawImage(img, rxMin, ryMin, rWidth, rHeight, 0, 0, rWidth, rHeight);
+            const base64Crop = canvas.toDataURL('image/jpeg', 0.75);
             
-            // IN-GRID RENDERING: Restore artifacts to their respectful locations
             bakedHtml = bakedHtml.replace(placeholderPattern, 
-                `<img src="${base64Crop}" style="width:100%; height:100%; display:block; object-fit:none;" alt="${artifact.description}" />`
+                `<img src="${base64Crop}" width="${rWidth}" height="${rHeight}" style="width:100%; max-width:${rWidth}px; height:auto; display:block; border:none; mso-height-rule:exactly;" alt="${artifact.description}" />`
             );
         }
         return bakedHtml;
@@ -190,19 +200,21 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
         }
     };
 
-    const handleSimpleClone = async () => {
+    const reconstructWithModel = async (model: string, setter: (url: string) => void) => {
         if (!file) return;
         try {
+            console.log(`🚀 Starting Reconstruction [${model}] for file: ${file.name}`);
             setStatus('preparing');
             setErrorMsg('');
-            const imageFiles = await splitPdfIntoImages(file, 1.0, 1.0, true);
-            // console.log(`📄 PDF Split complete: ${imageFiles.length} pages generated.`);
             
-            const base64Images = await Promise.all(imageFiles.map(async (img) => {
+            const imageFiles = await splitPdfIntoImages(file, 1.0, 1.0, true);
+            console.log(`📄 PDF Split complete: ${imageFiles.length} pages generated.`);
+            
+            const base64Images = await Promise.all(imageFiles.map(async (img, idx) => {
                 const buffer = await img.arrayBuffer();
                 const base64 = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
-                // console.log(`🖼️ Page ${idx + 1} ready for transmission.`);
-                return { mimeType: img.type, data: base64 };
+                console.log(`🖼️ Page ${idx + 1} encoded (Size: ${Math.round(base64.length / 1024)} KB)`);
+                return { mimeType: img.type, data: base64, url: URL.createObjectURL(img) };
             }));
 
             setStatus('reconstructing-html');
@@ -212,79 +224,142 @@ export const DocumentConverter: React.FC<DocumentConverterProps> = ({ userId: _u
             for (let i = 0; i < base64Images.length; i++) {
                 const imgData = base64Images[i];
                 const imgObj = new Image();
-                imgObj.src = `data:${imgData.mimeType};base64,${imgData.data}`;
+                imgObj.src = imgData.url;
                 await new Promise(r => imgObj.onload = r);
                 const dims = { width: imgObj.width, height: imgObj.height };
 
-                // console.log(`🚀 Sending Page ${i + 1} to AI (Simple Clone Mode)...`);
-                
+                console.log(`📡 Calling Supabase Edge Function [${model}] for Page ${i + 1}...`);
                 const { data, error } = await supabase.functions.invoke('reconstruct-pdf-html', {
                     headers: { Authorization: `Bearer ${session?.access_token}` },
                     body: { 
-                        images: [imgData], 
-                        model: 'google/gemini-2.0-flash-001', 
+                        images: [{ mimeType: imgData.mimeType, data: imgData.data }], 
+                        model: model, 
                         dimensions: dims
                     }
                 });
 
-                if (error || !data?.success) throw new Error(error?.message || data?.error || 'Simple Clone failed');
+                if (error || !data?.success) {
+                    console.error(`❌ AI Error on Page ${i + 1}:`, error || data?.error);
+                    console.log("Full Error Object:", data);
+                    throw new Error(error?.message || data?.error || 'Reconstruction failed');
+                }
                 
-                /*
-                console.log(`📊 AI Usage for Page ${i + 1} (Clone):`, {
-                    inputTokens: data.usage?.prompt_tokens,
-                    outputTokens: data.usage?.completion_tokens,
-                    totalTokens: data.usage?.total_tokens,
-                    htmlLength: data.html?.length || 0
+                console.log(`📊 AI Result Page ${i + 1}:`, {
+                    artifactsCount: data.artifacts?.length || 0,
+                    htmlLength: data.html?.length || 0,
+                    usage: data.usage,
+                    fullResponse: data
                 });
-                */
+
+                if (data.html && data.html.includes('REPAIR FAILED')) {
+                    console.warn(`⚠️ Warning: Forensic Repair failed for Page ${i + 1}. The AI response might be malformed.`);
+                    if (data.rawAiOutput) {
+                        console.log(`📜 Raw AI Output (Page ${i + 1}):\n`, data.rawAiOutput);
+                    }
+                    if (data.finishReason) {
+                        console.log(`🏁 Finish Reason (Page ${i + 1}):`, data.finishReason);
+                    }
+                }
 
                 if (data.html) {
-                    // console.log(`📜 RAW AI SOURCE CODE (Page ${i + 1}):\n`, data.html);
-                    aggregatedHtml += data.html;
+                    const bakedPageHtml = await bakePortableHtml(data.html, data.artifacts || [], imgData.url);
+                    aggregatedHtml += bakedPageHtml;
                     
-                    // Force a Word-compatible Page Break after each page (except potentially the last)
                     if (i < base64Images.length - 1) {
                         aggregatedHtml += `<br style="page-break-before: always; clear: both; mso-break-type: section-break;" />`;
                     }
                 }
             }
 
+            const isGpt4 = model.includes('gpt-4');
+            const title = isGpt4 ? 'GPT-4 Vision Export' : 'Forensic Export';
+            const btnColor = isGpt4 ? '#10a37f' : '#007bff';
+
             const masterExportScript = `
 <script>
 function exportToWord() {
-  var header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
-        "xmlns:w='urn:schemas-microsoft-com:office:word' "+
-        "xmlns='http://www.w3.org/TR/REC-html40'>"+
-        "<head><meta charset='utf-8'><title>Export HTML to Word</title></head><body>";
-  var footer = "</body></html>";
-  var sourceHTML = header + document.getElementById("content-to-export").innerHTML + footer;
-  
-  var source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
-  var fileDownload = document.createElement("a");
-  document.body.appendChild(fileDownload);
-  fileDownload.href = source;
-  fileDownload.download = 'document.doc';
-  fileDownload.click();
-  document.body.removeChild(fileDownload);
+  try {
+    const content = document.getElementById('content-to-export');
+    const images = content.getElementsByTagName('img');
+    const boundary = '----=_NextPart_000_01D4_01D4A5C1.12345678';
+    const wrap = (s) => s.replace(/(.{76})/g, '$1\\r\\n');
+    let mhtml = 'MIME-Version: 1.0\\r\\n';
+    mhtml += 'Content-Type: multipart/related; boundary="' + boundary + '"\\r\\n\\r\\n';
+    const imageMap = new Map();
+    const imageParts = [];
+    let tempHtml = content.innerHTML;
+    for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        const src = img.getAttribute('src');
+        if (src && src.startsWith('data:image')) {
+            if (!imageMap.has(src)) {
+                const cid = 'image' + imageMap.size + '@forensic.media';
+                const parts = src.split(',');
+                const mimeType = parts[0].split(':')[1].split(';')[0];
+                const base64Data = parts[1];
+                imageMap.set(src, cid);
+                let part = '--' + boundary + '\\r\\n';
+                part += 'Content-Type: ' + mimeType + '\\r\\n';
+                part += 'Content-Transfer-Encoding: base64\\r\\n';
+                part += 'Content-ID: <' + cid + '>\\r\\n';
+                part += 'Content-Location: ' + cid + '\\r\\n\\r\\n';
+                part += wrap(base64Data) + '\\r\\n';
+                imageParts.push(part);
+            }
+        }
+    }
+    imageMap.forEach((cid, src) => {
+        tempHtml = tempHtml.split(src).join('cid:' + cid);
+    });
+    let htmlBody = '<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">';
+    htmlBody += '<head><meta charset="utf-8"><title>${title}</title>';
+    htmlBody += '<style>td, tr { mso-line-height-rule: at-least; line-height: normal; }</style>';
+    htmlBody += '</head><body>' + tempHtml + '</body></html>';
+    const base64Html = btoa(unescape(encodeURIComponent(htmlBody)));
+    mhtml += '--' + boundary + '\\r\\n';
+    mhtml += 'Content-Type: text/html; charset="utf-8"\\r\\n';
+    mhtml += 'Content-Transfer-Encoding: base64\\r\\n\\r\\n';
+    mhtml += wrap(base64Html) + '\\r\\n\\r\\n';
+    for (let i = 0; i < imageParts.length; i++) {
+        mhtml += imageParts[i];
+    }
+    mhtml += '--' + boundary + '--\\r\\n';
+    const blob = new Blob([mhtml], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '${isGpt4 ? 'gpt4_vision_clone.doc' : 'simple_clone.doc'}';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Export Error: ' + err.message);
+  }
 }
 </script>
             `;
 
             const finalHtml = `<!DOCTYPE html><html><head>${masterExportScript}</head><body style="margin:0;padding:20px;background:#f0f2f5;">
-                <button onclick="exportToWord()" style="position:fixed;top:10px;right:10px;z-index:9999;padding:12px 24px;background:#007bff;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,0.2);">Export Full Document to Word</button>
+                <button onclick="exportToWord()" style="position:fixed;top:10px;right:10px;z-index:9999;padding:12px 24px;background:${btnColor};color:white;border:none;border-radius:6px;cursor:pointer;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,0.2);">Export Full Document to Word</button>
                 <div id="content-to-export">
                     ${aggregatedHtml}
                 </div>
             </body></html>`;
-            // console.log(`✅ Simple Clone Complete! Total aggregated HTML size: ${finalHtml.length} characters.`);
+            
+            console.log(`✅ Reconstruction Complete for ${model}!`);
             const blob = new Blob([finalHtml], { type: 'text/html' });
-            setSimpleHtmlUrl(URL.createObjectURL(blob));
+            setter(URL.createObjectURL(blob));
             setStatus('success');
         } catch (err: any) {
+            console.error(`💥 Fatal Error in ${model}:`, err);
             setErrorMsg(err.message || "Unknown error");
             setStatus('error');
         }
     };
+
+    const handleSimpleClone = () => reconstructWithModel('openai/gpt-5.4', setSimpleHtmlUrl);
+    const handleGpt4Vision = () => reconstructWithModel('openai/gpt-5.4', setGpt4HtmlUrl);
 
     return (
         <div className="max-w-4xl mx-auto py-12">
@@ -314,6 +389,9 @@ function exportToWord() {
                             <button onClick={handleSimpleClone} className="btn-secondary flex-1 px-8 py-4 text-[10px] tracking-widest uppercase border-amber-500/30 text-amber-500 flex items-center justify-center gap-2">
                                 <Zap size={14} /> Simple Clone
                             </button>
+                            <button onClick={handleGpt4Vision} className="btn-secondary flex-1 px-8 py-4 text-[10px] tracking-widest uppercase border-emerald-500/30 text-emerald-500 flex items-center justify-center gap-2 focus:ring-emerald-500/50">
+                                <Zap size={14} /> GPT-4 Vision
+                            </button>
                         </div>
                     </div>
                 )}
@@ -330,7 +408,8 @@ function exportToWord() {
                     {downloadUrl && <a href={downloadUrl} download className="btn-primary px-12 py-4 flex items-center gap-3"><Download size={20} /> Word</a>}
                     {htmlDownloadUrl && <a href={htmlDownloadUrl} download="forensic_reconstruction.html" className="btn-secondary px-12 py-4 flex items-center gap-3 border-emerald-500/30 text-emerald-400"><Download size={20} /> HTML</a>}
                     {simpleHtmlUrl && <a href={simpleHtmlUrl} download="ai_simple_clone.html" className="btn-secondary px-12 py-4 flex items-center gap-3 border-amber-500/30 text-amber-500"><Download size={20} /> Clone</a>}
-                    <button onClick={() => { setFile(null); setStatus('idle'); setHtmlDownloadUrl(''); setSimpleHtmlUrl(''); }} className="btn-secondary px-8 py-4 opacity-60">New File</button>
+                    {gpt4HtmlUrl && <a href={gpt4HtmlUrl} download="gpt4_vision_clone.html" className="btn-secondary px-12 py-4 flex items-center gap-3 border-emerald-500/30 text-emerald-400"><Download size={20} /> GPT-4 V</a>}
+                    <button onClick={() => { setFile(null); setStatus('idle'); setHtmlDownloadUrl(''); setSimpleHtmlUrl(''); setGpt4HtmlUrl(''); }} className="btn-secondary px-8 py-4 opacity-60">New File</button>
                 </div>
             )}
         </div>
